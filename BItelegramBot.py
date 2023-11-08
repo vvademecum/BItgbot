@@ -261,28 +261,92 @@ def handle_announceProject(call):
 def handle_project_selection(call):
     idProject = call.data[8:]
     
-    cursor.execute(f'''SELECT * FROM projects 
-                        WHERE id = '{idProject}';''')
-    project = cursor.fetchone();
+    # cursor.execute(f'''SELECT * FROM projects 
+    #                     WHERE id = '{idProject}';''')
+    # project = cursor.fetchone();
+
+    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    cancelReqBtn = types.KeyboardButton(text="🔴 Отмена")
+    approveReqBtn = types.KeyboardButton(text="🔵 Отправить запрос")
+
+    keyboard.row(cancelReqBtn, approveReqBtn)
+
     
     cursor.execute(f'''SELECT * FROM users_projects
 INNER JOIN projects ON users_projects.projectid = projects.id
 WHERE projectid = {idProject} and role = 'AUTOR';''')
-    # project = cursor.fetchone();
 
     columns = [desc[0] for desc in cursor.description]
     items = cursor.fetchall()
-    dictionary = dict(zip(columns, items[0]))
+    autor = dict(zip(columns, items[0]))
+    
 
-    user = getUserById(dictionary['userid'])
-    msg = bot.send_message(call.message.chat.id, f'''Наименование проекта: {dictionary['name']}
-Описание: {dictionary['description']}
-Категория: {dictionary['category']}
-Заявитель: {user[3] if user[3] != None else ""} {user[2] if user[2] != None else ""} {user[4] if user[4] != None else ""}
-''')
-    bot.register_next_step_handler(msg, process_updateEmail_step)
+    cursor.execute(f'''SELECT username, lastname, firstname, patronymic FROM users_projects
+INNER JOIN users ON users_projects.userid = users.id
+WHERE projectid = {idProject} and role = 'PARTNER';''')
+
+    items = cursor.fetchall()
+    partners = ""
+    for partner in items:
+        partners += f'_{partner[1] if partner[1] != None else ""} {partner[2] if partner[2] != None else ""} {partner[3] if partner[3] != None else ""}_ (@{partner[0]})\n'
+    
 
 
+    print(filter(autor['description']))
+
+    user = getUserById(autor['userid'])
+    fioUser = filter(f'{user[3] if user[3] != None else ""} {user[2] if user[2] != None else ""} {user[4] if user[4] != None else ""}')
+    msg = bot.send_message(call.message.chat.id, f'''*Наименование проекта*: _{autor['name']}_
+*Описание*: _{filter(autor['description'])}_
+*Категория*: _{filter(autor['category'])}_
+*Заявитель*: {fioUser}
+*Партнеры*: {filter(partners)}
+''', parse_mode="MarkdownV2", reply_markup=keyboard)
+    bot.register_next_step_handler(msg, process_requestToJoin_step)
+
+
+def filter(text):
+    text = text.replace('_', '\_').replace('*', '\*').replace('[', '\[').replace(']', '\]').replace('(', '\(').replace(')', '\)').replace('~', '\~').replace('`', '\`').replace('>', '\>').replace('#', '\#').replace('+', '\+').replace('-', '\-').replace('=', '\=').replace('|', '\|').replace('{', '\{').replace('}', '\}').replace('.', '\.').replace('!', '\!')
+    return text
+
+def process_requestToJoin_step(message):
+    try:
+        if message.text == "🔴 Отмена":
+            exitStepHandler(message)
+            return
+        elif message.text == "🔵 Отправить запрос":
+            
+        
+            email = message.text
+
+        pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+        if not re.match(pattern, email):
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод почты\n(Пример: _ivanov.i.i@gmail.com_)', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_updateEmail_step)
+            return
+        
+        cursor.execute(f'''UPDATE users SET email='{email}'
+                            WHERE id = '{message.from_user.id}';''')
+        connection.commit()
+
+
+        user = getUserById(message.from_user.id)
+        email = user[8].replace("_", "\_")
+
+        markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        markup.add('🔴 Повторить ввод', '🟢 Все верно')
+        bot.send_message(message.chat.id, f'''Данные обновлены, проверьте корректность:
+*ФИО*: _{user[3] if user[3] != None else ""} {user[2] if user[2] != None else ""} {user[4] if user[4] != None else ""}_
+*Сфера деятельности*: _{user[5]}_
+*О себе*: _{user[6]}_
+*Телефон*: _{user[7]}_
+*Email*: {email}''', 
+        reply_markup=markup, 
+        parse_mode="Markdown")
+        
+    except Exception as e:
+        print(e)
+        bot.reply_to(message, 'oooops')
 
 # def process_updateProjectGroup_step(message):
 #     try:
