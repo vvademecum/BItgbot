@@ -1,1 +1,1 @@
-updateUserInfo
+ADMIN

@@ -20,6 +20,33 @@ cursor = connection.cursor()
 print('[INFO] PostgreSQL start')
 
 
+# *Обновить информацию о пользователе*: 
+# `\/updateUserInfo \[@username\]`    
+
+# -------------------------------------------------- Update user info steps -----------------------
+
+
+def process_getUsernameForUpdate_step(message):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+        if getUserById(message.from_user.id)['status'].find("ADMIN") == -1:
+            bot.send_message(chat_id=message.chat.id, text= f"Недостаточно прав")
+            return 
+        
+        username = message.text.strip('@')
+        userId = getUserIdByUsername(username)
+        if userId == "-":
+            msg = bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден. Повторите ввод")
+            bot.register_next_step_handler(msg, process_getUsernameForUpdate_step)
+        else:
+            bot.send_message(chat_id=message.chat.id, text= f"Обновление данных пользователя @{username}")
+            updateFullname(message.chat.id, userId)
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
+
 def process_updateFullName_step(message, userId):
     try:
         # surname = message.text.strip().split(' ')[0]
@@ -104,7 +131,6 @@ def process_updateAboutMe_step(message, userId):
     except Exception as e:
         print(e)
         exitStepHandler(message, "error")
-
 
 def process_updateEducationalInstitution_step(message, userId):
     try:
@@ -415,6 +441,41 @@ def process_isRepeatFillingProject_step(message, projectName, projectDescription
         print("Error: ", ex)
         exitStepHandler(message, "error")
 
+
+# -------------------------------------------------- Join to project group -----------------------
+
+def process_requestToJoin_step(message, projectId, authorId):
+    try:
+        if message.text == "🔴 Отмена":
+            exitStepHandler(message, "ok")
+        elif message.text == "🔵 Отправить запрос":
+
+            user = getUserById(message.from_user.id)
+            fioUser = filter(f'{user["lastname"] if user["lastname"] != None else ""} {user["firstname"] if user["firstname"] != None else ""} {user["patronymic"] if user["patronymic"] != None else ""} (@{user["username"]})')
+
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+            rejectBtn = types.InlineKeyboardButton("🔴 Отклонить", callback_data=f'rejectRequest_{projectId}_{message.from_user.id}')
+            acceptBtn = types.InlineKeyboardButton("🟢 Принять", callback_data=f'acceptRequest_{projectId}_{message.from_user.id}')
+            keyboard.row(rejectBtn, acceptBtn)
+
+            bot.send_message(authorId, f"Пользователь {fioUser} отправил запрос на вступление в команду проекта *«{filter(getProjectById(projectId)[1])}»*", 
+                            reply_markup=keyboard, 
+                            parse_mode="MarkdownV2")
+            
+            bot.send_message(message.from_user.id, f"Ваша заявка на вступление в команду проекта *«{filter(getProjectById(projectId)[1])}»* была отправлена\. Скоро заявитель её рассмотрит и мы уведомим Вас о результате\.", 
+                            reply_markup=genKeyboard(message.from_user.id), 
+                            parse_mode="MarkdownV2")
+        else:
+            msg = bot.reply_to(message, 'Вы можете *подать заявку* на присоединение к команде выбранного проекта или *отменить* действие.', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_requestToJoin_step, projectId, authorId)
+        return
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+
+# -------------------------------------------------- Auxiliary -----------------------
+
 def exitStepHandler(message, status):
     text = "👌"
     if status == "error": 
@@ -427,6 +488,36 @@ def exitStepHandler(message, status):
 def filter(text):
     text = text.replace('_', '\_').replace('*', '\*').replace('[', '\[').replace(']', '\]').replace('(', '\(').replace(')', '\)').replace('~', '\~').replace('`', '\`').replace('>', '\>').replace('#', '\#').replace('+', '\+').replace('-', '\-').replace('=', '\=').replace('|', '\|').replace('{', '\{').replace('}', '\}').replace('.', '\.').replace('!', '\!')
     return text
+
+def extract_arg(arg):
+    return arg.split()[1:]
+
+def updateFullname(chatId, userId):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    msg = bot.send_message(chat_id=chatId, text=f"Введите ФИО через пробел\n(_Иванов Иван Иванович_)", parse_mode="Markdown", reply_markup=keyboard)
+    bot.register_next_step_handler(msg, process_updateFullName_step, userId)
+
+def announceProject(chatId):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    msg = bot.send_message(chatId, f"Введите *наименование* проекта", parse_mode="MarkdownV2", reply_markup=keyboard)
+    bot.register_next_step_handler(msg, process_insertProjectName_step)
+
+def getUsernameForUpdate(chatId):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    msg = bot.send_message(chatId, "Введите никнейм пользователя для редактирования данных\n(Пример: @volodin)", reply_markup=keyboard)        
+    bot.register_next_step_handler(message=msg, callback=process_getUsernameForUpdate_step)
+
+
+# -------------------------------------------------- Requests -----------------------
 
 def getProjects(page):
     buttons_per_page = 8
@@ -451,6 +542,20 @@ def getProjectById(projectId):
     cursor.execute(f'''SELECT * FROM projects 
                         WHERE id = '{projectId}';''')
     return cursor.fetchone();
+
+def getUserIdByUsername(username):
+    cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM users
+                                WHERE username = '{username}');''')
+    exists = cursor.fetchone()[0]
+    if not exists:
+        return "-"
+
+    cursor.execute(f'''SELECT id FROM users 
+                        WHERE username = '{username}';''')
+    userId = cursor.fetchone()[0]
+    return userId 
+
+# -------------------------------------------------- Keyboards and markup -----------------------
 
 def create_inline_keyboard(items, page):
     countOfProjects = getProjects(1)[1]
@@ -489,6 +594,30 @@ def create_inline_keyboard(items, page):
 
     return keyboard
 
+def genKeyboard(userId):
+    user = getUserById(userId)
+
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+
+    if user['status'].find("RESIDENT") != -1:
+        editInfoBtnText = "📝 Заполнить информацию о себе"
+        if user['fieldofactivity'] != None and str(user['fieldofactivity']).strip() != "":
+            editInfoBtnText = "📝 Редактировать информацию о себе"
+
+        updateProfileBtn = types.KeyboardButton(text=editInfoBtnText)
+        updateProjectGroupBtn = types.KeyboardButton(text="🗂 Добавить информацию о проекте")
+        keyboard.add(updateProfileBtn, updateProjectGroupBtn)
+    if user['status'].find("ADMIN") != -1:
+        adminPanelBtn = types.KeyboardButton(text="🛠️ Панель администратора")
+        keyboard.add(adminPanelBtn)
+    if user['status'].find("USER") != -1:
+        updateFullNameBtn = types.KeyboardButton(text="📃 Таблица вакансий")
+        keyboard.add(updateFullNameBtn)
+    return keyboard
+
+
+# -------------------------------------------------- Callback handlers -----------------------
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prev_') or call.data.startswith('next_'))
 def handle_navigation(call):
     countOfProjects = getProjects(1)[1]
@@ -503,22 +632,6 @@ def handle_navigation(call):
 
     keyboard = create_inline_keyboard(projects, current_page)
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
-
-def announceProject(chatId):
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
-    keyboard.add(goHomeBtn)
-
-    msg = bot.send_message(chatId, f"Введите *наименование* проекта", parse_mode="MarkdownV2", reply_markup=keyboard)
-    bot.register_next_step_handler(msg, process_insertProjectName_step)
-
-@bot.callback_query_handler(func=lambda call: call.data == 'announce_project')
-def handle_announceProject(call):
-    try:
-        announceProject(call.message.chat.id)
-    except Exception as e:
-        print(e)
-        exitStepHandler(call.message, "error")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('project_'))
 def handle_project_selection(call):
@@ -585,34 +698,21 @@ def handle_project_selection(call):
             print(e)
             exitStepHandler(call.message, "error")
 
-def process_requestToJoin_step(message, projectId, authorId):
+@bot.callback_query_handler(func=lambda call: call.data == 'announce_project')
+def handle_announceProject(call):
     try:
-        if message.text == "🔴 Отмена":
-            exitStepHandler(message, "ok")
-        elif message.text == "🔵 Отправить запрос":
-
-            user = getUserById(message.from_user.id)
-            fioUser = filter(f'{user["lastname"] if user["lastname"] != None else ""} {user["firstname"] if user["firstname"] != None else ""} {user["patronymic"] if user["patronymic"] != None else ""} (@{user["username"]})')
-
-            keyboard = types.InlineKeyboardMarkup(row_width=2)
-            rejectBtn = types.InlineKeyboardButton("🔴 Отклонить", callback_data=f'rejectRequest_{projectId}_{message.from_user.id}')
-            acceptBtn = types.InlineKeyboardButton("🟢 Принять", callback_data=f'acceptRequest_{projectId}_{message.from_user.id}')
-            keyboard.row(rejectBtn, acceptBtn)
-
-            bot.send_message(authorId, f"Пользователь {fioUser} отправил запрос на вступление в команду проекта *«{filter(getProjectById(projectId)[1])}»*", 
-                            reply_markup=keyboard, 
-                            parse_mode="MarkdownV2")
-            
-            bot.send_message(message.from_user.id, f"Ваша заявка на вступление в команду проекта *«{filter(getProjectById(projectId)[1])}»* была отправлена\. Скоро заявитель её рассмотрит и мы уведомим Вас о результате\.", 
-                            reply_markup=genKeyboard(message.from_user.id), 
-                            parse_mode="MarkdownV2")
-        else:
-            msg = bot.reply_to(message, 'Вы можете *подать заявку* на присоединение к команде выбранного проекта или *отменить* действие.', parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_requestToJoin_step, projectId, authorId)
-        return
+        announceProject(call.message.chat.id)
     except Exception as e:
         print(e)
-        exitStepHandler(message, "error")
+        exitStepHandler(call.message, "error")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'update_user_info')
+def handle_updateUserInfo(call):
+    try:
+        getUsernameForUpdate(call.message.chat.id)
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rejectRequest_') or call.data.startswith('acceptRequest_'))
 def handle_acceptRejectRequest(call):
@@ -648,6 +748,8 @@ def handle_acceptRejectRequest(call):
         exitStepHandler(call.message, "error")
 
 
+# -------------------------------------------------- Commands -----------------------
+
 @bot.message_handler(commands=['start'])
 def start(message):
     
@@ -665,13 +767,12 @@ def start(message):
 
     bot.send_message(chat_id=message.chat.id, text= f"Привет.", reply_markup=genKeyboard(message.from_user.id))
 
-def extract_arg(arg):
-    return arg.split()[1:]
-
 @bot.message_handler(commands=['updateUserInfo'])
 def updateResidentInfo(message):
+    # updateUserInfo()
+    
     try: 
-        if 'ADMIN' not in getUserById(message.from_user.id)['status']:
+        if getUserById(message.from_user.id)['status'].find("ADMIN") == -1:
             bot.send_message(chat_id=message.chat.id, text= f"Недостаточно прав")
             return 
         
@@ -686,45 +787,23 @@ def updateResidentInfo(message):
     except Exception as e:
         print(e)
         exitStepHandler(message, "error")
-    # bot.send_message(chat_id=message.chat.id, text= f"Привет.", reply_markup=genKeyboard(message.from_user.id))
-
-def getUserIdByUsername(username):
-
-    cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM users
-                                WHERE username = '{username}');''')
-    exists = cursor.fetchone()[0]
-
-    if not exists:
-        return "-"
-
-    cursor.execute(f'''SELECT id FROM users 
-                        WHERE username = '{username}';''')
-    userId = cursor.fetchone()[0]
-    return userId 
 
 
-def updateFullname(chatId, userId):
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
-    keyboard.add(goHomeBtn)
-
-    msg = bot.send_message(chat_id=chatId, text=f"Введите ФИО через пробел\n(_Иванов Иван Иванович_)", parse_mode="Markdown", reply_markup=keyboard)
-    bot.register_next_step_handler(msg, process_updateFullName_step, userId)
+# -------------------------------------------------- Message handlers -----------------------
 
 @bot.message_handler(func=lambda message: message.text == "📝 Заполнить информацию о себе" or message.text == "🔴 Повторить ввод" or message.text == "📝 Редактировать информацию о себе")
 def updateFullName_handler(message):
 
     user = getUserById(message.from_user.id)
-    if ('RESIDENT' not in user['status']):
+    if (user['status'].find("RESIDENT") == -1):
         return
     updateFullname(message.chat.id, message.from_user.id)
    
-
 @bot.message_handler(func=lambda message: message.text == "🗂 Добавить информацию о проекте")
 def selectionProjectGroup(message):
 
     user = getUserById(message.from_user.id)
-    if ('RESIDENT' not in user['status']):
+    if (user['status'].find("RESIDENT") == -1):
         return
 
     page = 1
@@ -734,7 +813,6 @@ def selectionProjectGroup(message):
 
 @bot.message_handler(func=lambda message: message.text == "🟢 Все верно" or message.text == "↩ Выйти")
 def goMainMenu(message):
-
     keyboard = genKeyboard(message.from_user.id)
     match message.text:
         case "🟢 Все верно":
@@ -742,23 +820,20 @@ def goMainMenu(message):
         case "↩ Выйти":
             bot.send_message(chat_id=message.chat.id, text=f"👌", parse_mode="Markdown", reply_markup=keyboard)
 
-def genKeyboard(userId):
-    user = getUserById(userId)
+@bot.message_handler(func=lambda message: message.text == "🛠️ Панель администратора")
+def getAdminPanel(message):
 
-    # print(user['status'])
-    if ('RESIDENT' in user['status']):
-        editInfoBtnText = "📝 Заполнить информацию о себе"
-        if user['fieldofactivity'] != None and str(user['fieldofactivity']).strip() != "":
-            editInfoBtnText = "📝 Редактировать информацию о себе"
-        keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)
-        updateProfileBtn = types.KeyboardButton(text=editInfoBtnText)
-        updateProjectGroupBtn = types.KeyboardButton(text="🗂 Добавить информацию о проекте")
-        keyboard.add(updateProfileBtn, updateProjectGroupBtn)
-    else:
-        keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-        updateFullNameBtn = types.KeyboardButton(text="📃 Таблица вакансий")
-        keyboard.add(updateFullNameBtn)
-    return keyboard
+    user = getUserById(message.from_user.id)
+    if (user['status'].find("ADMIN") == -1):
+        return
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    updateUserInfoBtn = types.InlineKeyboardButton('✏️ Обновить информацию о пользователе', callback_data=f'update_user_info')
+    keyboard.add(updateUserInfoBtn)
+
+    bot.send_message(chat_id=message.chat.id, text=f'''__Возможности администратора__''', parse_mode="MarkdownV2", reply_markup=keyboard)
+
+
 
 
 @bot.message_handler(content_types=["new_chat_members"])
@@ -782,7 +857,6 @@ def handler_new_member(message):
 
     except Exception as ex:
         print('[INFO] Error postgresql ', ex)
-
 
 @bot.message_handler(commands=['send'])
 def send_message_to_group(message):
