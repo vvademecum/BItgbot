@@ -92,10 +92,18 @@ def process_updateAboutMe_step(message):
                             WHERE id = '{message.from_user.id}';''')
         connection.commit()
 
-        msg = bot.reply_to(message, 'Укажите учебное заведение в виде аббревиатуры\n(Пример: _РЭУ им. Г.В. Плеханова_)', parse_mode="Markdown")
+        keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+        reaBtn = types.KeyboardButton(text="РЭУ им. Г.В. Плеханова")
+        hseBtn = types.KeyboardButton(text="НИУ ВШЭ")
+        mftiBtn = types.KeyboardButton(text="МФТИ")
+        goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+        keyboard.add(reaBtn, hseBtn, mftiBtn, goHomeBtn)
+
+        msg = bot.send_message(message.chat.id, 'Выберите учебное заведение или укажите вручную', parse_mode="Markdown", reply_markup=keyboard)
         bot.register_next_step_handler(msg, process_updateEducationalInstitution_step) 
     except Exception as e:
-        bot.reply_to(message, 'oooops')
+        print(e)
+        exitStepHandler(message, "error")
 
 
 def process_updateEducationalInstitution_step(message):
@@ -103,23 +111,107 @@ def process_updateEducationalInstitution_step(message):
         if message.text == "↩ Выйти":
             exitStepHandler(message, "ok")
             return
-        
+    
         educationalInstitution = message.text
 
         if len(educationalInstitution) < 3:
-            msg = bot.reply_to(message, 'Неверный формат, повторите ввод учебного заведения\n(Пример: _НИУ ВШЭ_)', parse_mode="Markdown")
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод учебного заведения', parse_mode="Markdown")
             bot.register_next_step_handler(msg, process_updateEducationalInstitution_step)
             return
-        
+    
         cursor.execute(f'''UPDATE users SET educationalinstitution='{educationalInstitution}'
                             WHERE id = '{message.from_user.id}';''')
         connection.commit()
 
-        msg = bot.reply_to(message, 'Отлично, оставьте свой номер телефона\n(_+79993332211_)', parse_mode="Markdown")
+        keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+        keyboard.add(types.KeyboardButton(text="↩ Выйти"))
+
+        if message.text == "РЭУ им. Г.В. Плеханова":
+            msg = bot.send_message(message.chat.id, 'Укажите вашу Высшую школу/Институт/Факультет', parse_mode="Markdown", reply_markup=keyboard)
+            bot.register_next_step_handler(msg, process_updateFaculty_step) 
+            return
+
+        msg = bot.send_message(message.chat.id, 'Отлично, оставьте свой номер телефона\n(_+79993332211_)', parse_mode="Markdown", reply_markup=keyboard)
         bot.register_next_step_handler(msg, process_updatePhoneNum_step) 
     except Exception as e:
         print(e)
-        bot.reply_to(message, 'oooops')
+        exitStepHandler(message, "error")
+
+def process_updateFaculty_step(message):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+    
+        faculty = message.text
+
+        if len(faculty) < 3:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод ВШ/И/Ф', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_updateFaculty_step)
+            return
+    
+        cursor.execute(f'''UPDATE users SET faculty='{faculty}'
+                            WHERE id = '{message.from_user.id}';''')
+        connection.commit()
+
+        keyboard = types.ReplyKeyboardMarkup(row_width=4, resize_keyboard=True)
+        keyboard.add(types.KeyboardButton(text="1"), types.KeyboardButton(text="2"), types.KeyboardButton(text="3"), types.KeyboardButton(text="4"), types.KeyboardButton(text="5"))
+        keyboard.add(types.KeyboardButton(text="↩ Выйти"))
+
+        msg = bot.send_message(message.chat.id, 'На каком курсе вы обучаетесь?', parse_mode="Markdown", reply_markup=keyboard)
+        bot.register_next_step_handler(msg, process_updateCourse_step) 
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_updateCourse_step(message):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+    
+        course = message.text
+
+        if len(course) > 1 or not course.isdigit():
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод курса\n(Пример: 2)', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_updateCourse_step)
+            return
+    
+        cursor.execute(f'''UPDATE users SET course={course}
+                            WHERE id = '{message.from_user.id}';''')
+        connection.commit()
+
+        keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+        keyboard.add(types.KeyboardButton(text="↩ Выйти"))
+
+        msg = bot.send_message(message.chat.id, 'Укажите Ваше направление подготовки.', parse_mode="Markdown", reply_markup=keyboard)
+        bot.register_next_step_handler(msg, process_updateDirection_step) 
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_updateDirection_step(message):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+    
+        direction = message.text
+
+        if len(direction) < 5:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод направления подготовки', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_updateDirection_step)
+            return
+    
+        cursor.execute(f'''UPDATE users SET direction='{direction}'
+                            WHERE id = '{message.from_user.id}';''')
+        connection.commit()
+
+        msg = bot.send_message(message.chat.id, 'Отлично, оставьте свой номер телефона\n(_+79993332211_)', parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_updatePhoneNum_step) 
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
 
 def process_updatePhoneNum_step(message):
     try:
@@ -143,7 +235,7 @@ def process_updatePhoneNum_step(message):
         bot.register_next_step_handler(msg, process_updateEmail_step) 
     except Exception as e:
         print(e)
-        bot.reply_to(message, 'oooops')
+        exitStepHandler(message, "error")
 
 def process_updateEmail_step(message):
     try:
@@ -181,13 +273,17 @@ def process_updateEmail_step(message):
 
         markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         markup.add('🔴 Повторить ввод', '🟢 Все верно')
+
+        additionInfo = ""
+        if user['educationalinstitution'] == "РЭУ им. Г.В. Плеханова":
+            additionInfo = f" ({user['course']} курс, {user['faculty']}, по направлению «{user['direction']}»)"
         bot.send_message(message.chat.id, f'''Данные обновлены, проверьте корректность:
 
 *ФИО*: _{user['lastname'] if user['lastname'] != None else ""} {user['firstname'] if user['firstname'] != None else ""} {user['patronymic'] if user['patronymic'] != None else ""}_
 
 *Сфера деятельности*: _{user['fieldofactivity']}_
 
-*Учебное заведение*: _{user['educationalinstitution']}_
+*Учебное заведение*: _{user['educationalinstitution']}{additionInfo}_
 
 *О себе*: _{user['aboutme']}_
 
@@ -201,7 +297,7 @@ def process_updateEmail_step(message):
         
     except Exception as e:
         print(e)
-        bot.reply_to(message, 'oooops')
+        exitStepHandler(message, "error")
 
 
 # -------------------------------------------------- Create project steps -----------------------
@@ -485,13 +581,13 @@ def handle_project_selection(call):
             exitStepHandler(call.message, "error")
 
 def process_requestToJoin_step(message, projectId, authorId):
-    try:
+    # try:
         if message.text == "🔴 Отмена":
             exitStepHandler(message, "ok")
         elif message.text == "🔵 Отправить запрос":
 
             user = getUserById(message.from_user.id)
-            fioUser = filter(f'{user[3] if user[3] != None else ""} {user[2] if user[2] != None else ""} {user[4] if user[4] != None else ""} (@{user[1]})')
+            fioUser = filter(f'{user["lastname"] if user["lastname"] != None else ""} {user["firstname"] if user["firstname"] != None else ""} {user["patronymic"] if user["patronymic"] != None else ""} (@{user["username"]})')
 
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             rejectBtn = types.InlineKeyboardButton("🔴 Отклонить", callback_data=f'rejectRequest_{projectId}_{message.from_user.id}')
@@ -509,9 +605,9 @@ def process_requestToJoin_step(message, projectId, authorId):
             msg = bot.reply_to(message, 'Вы можете *подать заявку* на присоединение к команде выбранного проекта или *отменить* действие.', parse_mode="Markdown")
             bot.register_next_step_handler(msg, process_requestToJoin_step, projectId, authorId)
         return
-    except Exception as e:
-        print(e)
-        exitStepHandler(message, "error")
+    # except Exception as e:
+    #     print(e)
+    #     exitStepHandler(message, "error")
         # bot.reply_to(message, f'oooops')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rejectRequest_') or call.data.startswith('acceptRequest_'))
