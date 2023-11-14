@@ -213,9 +213,17 @@ def process_insertProjectName_step(message):
             return
             
         projectName = message.text
-
         if len(projectName) < 3:
             msg = bot.reply_to(message, f'Неверный формат, повторите ввод наименования', parse_mode="Markdown")
+            bot.register_next_step_handler(message=msg, callback=process_insertProjectName_step)
+            return 
+        
+        cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM projects
+                                WHERE name = '{projectName.strip()}');''')
+        isAlreadyExists = cursor.fetchone()
+        
+        if isAlreadyExists[0]:
+            msg = bot.reply_to(message, f'Проект с таким наименованием уже существет, повторите ввод', parse_mode="Markdown")
             bot.register_next_step_handler(message=msg, callback=process_insertProjectName_step)
             return 
 
@@ -356,11 +364,9 @@ def create_inline_keyboard(items, page):
 
     for i in range(0, len(items), 2):
         button1 = types.InlineKeyboardButton(items[i][0], callback_data=f'project_{items[i][1]}')
-
         if i + 1 == len(items):
             keyboard.add(button1)
             break
-        
         button2 = types.InlineKeyboardButton(items[i+1][0], callback_data=f'project_{items[i+1][1]}')
         keyboard.row(button1, button2)
 
@@ -368,6 +374,9 @@ def create_inline_keyboard(items, page):
         prev_button = types.InlineKeyboardButton('⬅', callback_data=f'prev_{page}')
         next_button = types.InlineKeyboardButton('➡', callback_data=f'next_{page}')
         keyboard.row(prev_button, next_button)
+    elif page == 1 and leftBtn <= buttons_per_page:
+        announceProject_button = types.InlineKeyboardButton('✉ Заявить о новом проекте', callback_data=f'announce_project')
+        keyboard.add(announceProject_button)
     elif end_idx < countOfProjects:
         next_button = types.InlineKeyboardButton('➡', callback_data=f'next_{page}')
         keyboard.add(next_button)
