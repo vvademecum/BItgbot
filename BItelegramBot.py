@@ -4,7 +4,9 @@ import csv
 import psycopg2
 import re
 import config
-
+from io import BytesIO
+import openpyxl
+from openpyxl.styles import NamedStyle, Font, Alignment, Border, Side
 
 bot = telebot.TeleBot(config.BOT_TOKEN)
 
@@ -19,9 +21,6 @@ cursor = connection.cursor()
 
 print('[INFO] PostgreSQL start')
 
-
-# *Обновить информацию о пользователе*: 
-# `\/updateUserInfo \[@username\]`    
 
 # -------------------------------------------------- Update user info steps -----------------------
 
@@ -873,6 +872,100 @@ def handle_getProjectInfo(call):
         print(e)
         exitStepHandler(call.message, "error")
 
+@bot.callback_query_handler(func=lambda call: call.data == 'get_users_excel')
+def handle_getUsersExcel(call):
+    try:
+        query_string = '''SELECT id, username, lastname, firstname, patronymic, 
+                                fieldofactivity, aboutme, educationalinstitution, faculty, course, direction, 
+                                phonenum, email, status FROM users ORDER BY lastname'''
+        filepath = "usersList.xlsx"
+
+        export_to_excel(query_string,("username", "lastname", "firstname", "patronymic", 
+                                        "fieldofactivity", "aboutme", "educationalinstitution", "faculty", "course", "direction", 
+                                        "phonenum", "email", "status", "projectMember"), filepath)
+
+        with open('usersList.xlsx', 'rb') as tmp:
+            bot.send_document(call.from_user.id, tmp)
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'get_projects_excel')
+def handle_getProjectsExcel(call):
+    try:
+        query_string = '''SELECT * FROM projects ORDER BY name'''
+        filepath = "projectsList.xlsx"
+
+        export_to_excel(query_string,("name", "desription", "category", "author", "partners"), filepath)
+
+        with open('projectsList.xlsx', 'rb') as tmp:
+            bot.send_document(call.from_user.id, tmp)
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
+
+def export_to_excel(query_string, headings, filepath):
+    cursor.execute(query_string)
+    data = cursor.fetchall()
+
+    wb = openpyxl.Workbook()
+    sheet = wb.active
+
+    header = NamedStyle(name="header")
+    header.font = Font(bold=True)
+    header.border = Border(bottom=Side(border_style="thin"))
+    header.alignment = Alignment(horizontal="center", vertical="center")
+
+    for colno, heading in enumerate(headings, start = 1):
+        sheet.cell(row = 1, column = colno).value = heading
+
+    header_row = sheet[1]
+    for cell in header_row:
+        cell.style = header
+
+    for rowno, row in enumerate(data, start = 2):
+        itemId = row[0]
+        for colno, cell_value in enumerate(row[1:], start = 1):
+            
+            if filepath.startswith('usersList'):
+                if colno == 13: # projectMember - 1 column
+                    cursor.execute(f'''SELECT name FROM users_projects
+                            INNER JOIN projects ON users_projects.projectid = projects.id
+                            WHERE userid = '{itemId}';''')
+                    projects = cursor.fetchall()
+                    projectNames = ""
+                    for project in projects:
+                        projectNames += project[0] + ", "
+                    
+                    sheet.cell(row = rowno, column = colno).value = cell_value
+                    sheet.cell(row = rowno, column = colno+1).value = projectNames[:-2]
+                    continue
+            elif filepath.startswith('projectsList'):
+                if colno == 3: # projectMember - 1 column
+                    cursor.execute(f'''SELECT concat(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') as FIO FROM users_projects
+                                        INNER JOIN users ON users_projects.userid = users.id
+                                        WHERE projectid = {itemId} and role = 'AUTHOR';''')
+                    fioAuthor = cursor.fetchone()[0]
+
+                    cursor.execute(f'''SELECT concat(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') FROM users_projects
+                            INNER JOIN users ON users_projects.userid = users.id
+                            WHERE projectid = {itemId} and role = 'PARTNER';''')
+                    items = cursor.fetchall()
+                    partners = ""
+
+                    for partner in items:
+                        partners += f'{partner[0] if partner[0] != None else ""};\n'
+                    
+                    if partners.strip() != "":
+                        partners = f"{partners}"[:-2] + "."
+
+                    sheet.cell(row = rowno, column = colno).value = cell_value
+                    sheet.cell(row = rowno, column = colno+1).value = fioAuthor
+                    sheet.cell(row = rowno, column = colno+2).value = partners
+                    continue
+            sheet.cell(row = rowno, column = colno).value = cell_value
+    wb.save(filepath)
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rejectRequest_') or call.data.startswith('acceptRequest_'))
 def handle_acceptRejectRequest(call):
     try:
@@ -924,7 +1017,22 @@ def start(message):
 
     # connection.commit()
 
-    bot.send_message(chat_id=message.chat.id, text= f"Привет.", reply_markup=genKeyboard(message.from_user.id))
+    user = getUserById(message.from_user.id)
+
+    helloTxt = "🐝 Привет\!"
+
+    if user['status'].find("RESIDENT") != -1:
+        helloTxt = "🐝 Привет, резидент\!"
+    if user['status'].find("ADMIN") != -1:
+        helloTxt = '''🐝 Привет\! Доступные быстрые команды:
+*Обновить информацию о пользователе*: 
+`\/updateUserInfo @username`
+*Просмотреть информацию о пользователе*: 
+`\/getUserInfo @username`
+*Просмотреть информацию о пользователе*: 
+`\/getProjectInfo projectName`'''
+ 
+    bot.send_message(chat_id=message.chat.id, text= helloTxt, reply_markup=genKeyboard(message.from_user.id), parse_mode="MarkdownV2")
 
 @bot.message_handler(commands=['updateUserInfo'])
 def updateResidentInfo(message):
@@ -1020,8 +1128,10 @@ def getAdminPanel(message):
     updateUserInfoBtn = types.InlineKeyboardButton('✏️ Обновить информацию о пользователе', callback_data=f'update_user_info')
     getUserInfoBtn = types.InlineKeyboardButton('👤 Информация о пользователе ', callback_data=f'get_user_info')
     getProjectInfoBtn = types.InlineKeyboardButton('📗 Информация о проекте', callback_data=f'get_project_info')
+    getUsersExcelBtn = types.InlineKeyboardButton('📁 Выгрузить Excel по пользователям', callback_data=f'get_users_excel')
+    getProjectsExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel по проектам', callback_data=f'get_projects_excel')
 
-    keyboard.add(updateUserInfoBtn, getUserInfoBtn, getProjectInfoBtn)
+    keyboard.add(updateUserInfoBtn, getUserInfoBtn, getProjectInfoBtn, getUsersExcelBtn, getProjectsExcelBtn)
 
     bot.send_message(chat_id=message.chat.id, text=f'''__Возможности администратора__''', parse_mode="MarkdownV2", reply_markup=keyboard)
 
@@ -1069,3 +1179,5 @@ def send_message_to_group(message):
 
 
 bot.infinity_polling()
+
+
