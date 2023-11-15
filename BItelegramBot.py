@@ -47,6 +47,56 @@ def process_getUsernameForUpdate_step(message):
         print("Error: ", ex)
         exitStepHandler(message, "error")
 
+def process_getUsernameForSelect_step(message):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+
+        username = message.text.strip('@')
+        userId = getUserIdByUsername(username)
+        if userId == "-":
+            msg = bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден. Повторите ввод")
+            bot.register_next_step_handler(msg, process_getUsernameForSelect_step)
+            return
+
+        cursor.execute(f'''SELECT name FROM users_projects
+                            INNER JOIN projects ON users_projects.projectid = projects.id
+                            WHERE userid = '{userId}';''')
+        projects = cursor.fetchall()
+
+        projectNames = ""
+        for project in projects:
+            projectNames += project[0] + ", "
+        
+        if projectNames.strip() != "":
+            projectNames = f"*Участник проектов*\: {filter(projectNames)}"[:-2]
+        user = getUserById(userId)
+
+        additionInfo = ""
+        if user['educationalinstitution'] == "РЭУ им. Г.В. Плеханова":
+            additionInfo = f" ({user['course']} курс, {user['faculty']}, по направлению «{user['direction']}»)"
+        bot.send_message(message.chat.id, f'''__Информация по пользователю @{filter(user['username'])}__\:
+
+*ФИО*: _{user['lastname'] if user['lastname'] != None else ""} {user['firstname'] if user['firstname'] != None else ""} {user['patronymic'] if user['patronymic'] != None else ""}_
+
+*Сфера деятельности*: _{filter(user['fieldofactivity']) if user['fieldofactivity'] is not None else filter("---")}_
+
+*Учебное заведение*: _{filter(user['educationalinstitution']) if user['educationalinstitution'] is not None else filter("---")}{filter(additionInfo) if user['educationalinstitution'] is not None else ""}_
+
+*О себе*: _{filter(user['aboutme']) if user['aboutme'] is not None else filter("---")}_
+
+*Телефон*: _{filter(user['phonenum']) if user['phonenum'] is not None else filter("---")}_
+
+*Email*: {filter(user['email']) if user['email'] is not None else filter("---")}
+
+{projectNames.strip()}''', 
+        reply_markup=genKeyboard(message.from_user.id),
+        parse_mode="MarkdownV2")
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
+
 def process_updateFullName_step(message, userId):
     try:
         # surname = message.text.strip().split(' ')[0]
@@ -333,6 +383,59 @@ def process_updateEmail_step(message, userId):
 
 # -------------------------------------------------- Create project steps -----------------------
 
+def process_getProjectnameForUpdate_step(message):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+        
+        projectName = message.text.strip()
+        projectId = getProjectIdByProjectname(projectName)
+        if projectId == "-":
+            msg = bot.send_message(chat_id=message.chat.id, text= f"Проект не найден. Повторите ввод")
+            bot.register_next_step_handler(msg, process_getProjectnameForUpdate_step)
+            return
+        
+        cursor.execute(f'''SELECT * FROM users_projects
+                            INNER JOIN projects ON users_projects.projectid = projects.id
+                            WHERE projectid = {projectId} and role = 'AUTHOR';''')
+        columns = [desc[0] for desc in cursor.description]
+        items = cursor.fetchall()
+        author = dict(zip(columns, items[0]))
+
+        cursor.execute(f'''SELECT username, lastname, firstname, patronymic, userid FROM users_projects
+                            INNER JOIN users ON users_projects.userid = users.id
+                            WHERE projectid = {projectId} and role = 'PARTNER';''')
+        items = cursor.fetchall()
+        partners = ""
+
+        for partner in items:
+            partners += filter(f'{partner[1] if partner[1] != None else ""} {partner[2] if partner[2] != None else ""} {partner[3] if partner[3] != None else ""} (@{partner[0]});\n')
+        
+        if partners.strip() != "":
+            partners = f"*Партнеры*: \n{partners}"[:-2] + "\."
+
+        user = getUserById(author['userid'])
+        fioUser = filter(f'{user["lastname"] if user["lastname"] != None else ""} {user["firstname"] if user["firstname"] != None else ""} {user["patronymic"] if user["patronymic"] != None else ""} (@{user["username"]})')
+        
+        aboutProject = f"__Вы можете подать запрос на вступление в команду проекта «{filter(author['name'])}»\.__"
+
+        bot.send_message(message.chat.id, f''' __Информация о проекте {filter(projectName)}:__
+                            
+*Наименование проекта*: _{filter(author['name'])}_
+
+*Описание*: _{filter(author['description'])}_
+
+*Категория*: _{filter(author['category'])}_
+
+*Заявитель*: {fioUser}
+
+{partners}
+    ''', parse_mode="MarkdownV2", reply_markup=genKeyboard(message.from_user.id))
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
+
 def process_insertProjectName_step(message):
     try:
         if message.text == "↩ Выйти":
@@ -516,6 +619,21 @@ def getUsernameForUpdate(chatId):
     msg = bot.send_message(chatId, "Введите никнейм пользователя для редактирования данных\n(Пример: @volodin)", reply_markup=keyboard)        
     bot.register_next_step_handler(message=msg, callback=process_getUsernameForUpdate_step)
 
+def getUsernameForSelect(chatId):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    msg = bot.send_message(chatId, "Введите никнейм пользователя для отображения данных\n(Пример: @volodin)", reply_markup=keyboard)        
+    bot.register_next_step_handler(message=msg, callback=process_getUsernameForSelect_step)
+
+def getProjectnameForSelect(chatId):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    msg = bot.send_message(chatId, "Введите наименование проекта для отображения данных\n(Пример: TimeTrace)", reply_markup=keyboard)        
+    bot.register_next_step_handler(message=msg, callback=process_getProjectnameForUpdate_step)
 
 # -------------------------------------------------- Requests -----------------------
 
@@ -555,6 +673,17 @@ def getUserIdByUsername(username):
     userId = cursor.fetchone()[0]
     return userId 
 
+def getProjectIdByProjectname(name):
+    cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM projects
+                                WHERE name = '{name}');''')
+    exists = cursor.fetchone()[0]
+    if not exists:
+        return "-"
+
+    cursor.execute(f'''SELECT id FROM projects 
+                        WHERE name = '{name}';''')
+    projectId = cursor.fetchone()[0]
+    return projectId 
 # -------------------------------------------------- Keyboards and markup -----------------------
 
 def create_inline_keyboard(items, page):
@@ -714,6 +843,22 @@ def handle_updateUserInfo(call):
         print(e)
         exitStepHandler(call.message, "error")
 
+@bot.callback_query_handler(func=lambda call: call.data == 'get_user_info')
+def handle_getUserInfo(call):
+    try:
+        getUsernameForSelect(call.message.chat.id)
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'get_project_info')
+def handle_getProjectInfo(call):
+    try:
+        getProjectnameForSelect(call.message.chat.id)
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rejectRequest_') or call.data.startswith('acceptRequest_'))
 def handle_acceptRejectRequest(call):
     try:
@@ -829,11 +974,12 @@ def getAdminPanel(message):
 
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     updateUserInfoBtn = types.InlineKeyboardButton('✏️ Обновить информацию о пользователе', callback_data=f'update_user_info')
-    keyboard.add(updateUserInfoBtn)
+    getUserInfoBtn = types.InlineKeyboardButton('👤 Информация о пользователе ', callback_data=f'get_user_info')
+    getProjectInfoBtn = types.InlineKeyboardButton('📗 Информация о проекте', callback_data=f'get_project_info')
+
+    keyboard.add(updateUserInfoBtn, getUserInfoBtn, getProjectInfoBtn)
 
     bot.send_message(chat_id=message.chat.id, text=f'''__Возможности администратора__''', parse_mode="MarkdownV2", reply_markup=keyboard)
-
-
 
 
 @bot.message_handler(content_types=["new_chat_members"])
