@@ -4,7 +4,8 @@ import csv
 import psycopg2
 import re
 import config
-from io import BytesIO
+import requests
+import json
 import openpyxl
 from openpyxl.styles import NamedStyle, Font, Alignment, Border, Side
 
@@ -477,6 +478,107 @@ def process_isRepeatFillingProject_step(message, projectName, projectDescription
         exitStepHandler(message, "error")
 
 
+
+def process_meetingDate_step(message):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+        
+        meetingDate = message.text
+
+        pattern = re.compile(r'^\d{2}.\d{2}.\d{2} \d{2}:\d{2}$')
+        if not re.match(pattern, meetingDate):
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени мероприятия:\n(Пример: _18.11.23 17:00_)', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_meetingDate_step)
+            return
+        
+        msg = bot.reply_to(message, 'Информация о мероприятии и описание:', parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_descriptionEvent_step, meetingDate) 
+        
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
+
+def process_descriptionEvent_step(message, meetingDate):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+        
+        description = message.text
+
+        if len(description) < 10:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод информации о мероприятии и описания', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_descriptionEvent_step, meetingDate)
+            return
+
+        msg = bot.reply_to(message, 'Дедлайн голосования:\n(_День.Месяц.Год Час:Мин_)', parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, description) 
+        
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
+
+def process_deadlineEvent_step(message, meetingDate, description):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+        
+        deadline = message.text
+
+        pattern = re.compile(r'^\d{2}.\d{2}.\d{2} \d{2}:\d{2}$')
+        if not re.match(pattern, deadline):
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени окончания голосования\n(Пример: _17.11.23 21:00_)', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, description)
+            return
+
+        markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        markup.add('🔴 Повторить ввод', '🟢 Все верно')
+
+        msg = bot.send_message(message.chat.id , f'''__Опрос будет выглядеть следующим образом\. Отправляем?__
+                           
+*{filter(meetingDate)}* состоится новое мероприятие\!
+{filter(description)}
+
+_*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mode="MarkdownV2", reply_markup=markup)
+        bot.register_next_step_handler(msg, process_isRepeatFillingEvent_step, meetingDate, description, deadline) 
+        
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
+        
+
+def process_isRepeatFillingEvent_step(message, meetingDate, description, deadline):
+    try:
+        if message.text == "🔴 Повторить ввод":
+            createNewEvent(message.chat.id)
+        elif message.text == "🟢 Все верно":
+
+            question = meetingDate
+            options = ["Приду", "Не смогу"]
+            bot.send_message(chat_id="-4017335152", text=f'''*{filter(meetingDate)}* состоится новое мероприятие\!
+{filter(description)}
+
+_*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mode="MarkdownV2")
+            pollMessage = bot.send_poll(chat_id="-4017335152", question=question, options=options, is_anonymous=False)
+
+            meetingDate = f"{meetingDate.split('.')[1]}.{meetingDate.split('.')[0]}.{meetingDate[6:]}"
+            deadline = f"{deadline.split('.')[1]}.{deadline.split('.')[0]}.{deadline[6:]}"
+
+            cursor.execute(f'''INSERT INTO events (id, description, meetingdate, isactive, polldeadline) VALUES (%s, %s, %s, %s, %s)''', 
+                           (pollMessage.json['poll']['id'], description, meetingDate, True, deadline))
+            connection.commit()
+            
+            exitStepHandler(message, "ok")
+        else:   
+            msg = bot.send_message(chat_id=message.chat.id, text="Проверьте данные и сделайте выбор", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_isRepeatFillingEvent_step, meetingDate, description, deadline)
+
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
 # -------------------------------------------------- Join to project group -----------------------
 
 def process_requestToJoin_step(message, projectId, authorId):
@@ -566,6 +668,14 @@ def getProjectnameForSelect(chatId):
 
     msg = bot.send_message(chatId, "Введите наименование проекта для отображения данных\n(Пример: TimeTrace)", reply_markup=keyboard)        
     bot.register_next_step_handler(message=msg, callback=process_getProjectnameForSelect_step)
+
+def createNewEvent(chatId):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    msg = bot.send_message(chat_id=chatId, text=f"Введите дату проведения мероприятия\n(_День.Месяц.Год Час:Мин_)", parse_mode="Markdown", reply_markup=keyboard)
+    bot.register_next_step_handler(msg, process_meetingDate_step)
 
 # -------------------------------------------------- Requests -----------------------
 
@@ -752,6 +862,9 @@ def genKeyboard(userId):
     if user['status'].find("ADMIN") != -1:
         adminPanelBtn = types.KeyboardButton(text="🛠️ Панель администратора")
         keyboard.add(adminPanelBtn)
+    if user['status'].find("EVENT_MANAGER") != -1:
+        newEventBtn = types.KeyboardButton(text="🎟️ Новое мероприятие")
+        keyboard.add(newEventBtn)
     if user['status'].find("USER") != -1:
         updateFullNameBtn = types.KeyboardButton(text="📃 Таблица вакансий")
         keyboard.add(updateFullNameBtn)
@@ -1024,7 +1137,7 @@ def start(message):
     if user['status'].find("RESIDENT") != -1:
         helloTxt = "🐝 Привет, резидент\!"
     if user['status'].find("ADMIN") != -1:
-        helloTxt = '''🐝 Привет\! Доступные быстрые команды:
+        helloTxt = '''🐝 Привет\! Быстрые команды:
 *Обновить информацию о пользователе*: 
 `\/updateUserInfo @username`
 *Просмотреть информацию о пользователе*: 
@@ -1135,6 +1248,15 @@ def getAdminPanel(message):
 
     bot.send_message(chat_id=message.chat.id, text=f'''__Возможности администратора__''', parse_mode="MarkdownV2", reply_markup=keyboard)
 
+@bot.message_handler(func=lambda message: message.text == "🎟️ Новое мероприятие")
+def newEvent(message):
+
+    user = getUserById(message.from_user.id)
+    if (user['status'].find("EVENT_MANAGER") == -1):
+        return
+
+    createNewEvent(message.chat.id)
+
 @bot.message_handler(content_types=["new_chat_members"])
 def handler_new_member(message):
 
@@ -1163,9 +1285,19 @@ def send_message_to_group(message):
     chat_id = message.chat.id
     members_count = bot.get_chat_members_count(chat_id)
     print(chat_id)
+    # "-4017335152"
     # 809778477
-   
 
+    question = "Ты идешь на мероприятие?"
+    options = ["Да", "Нет"]
+    poll_message = bot.send_poll(message.chat.id, question, options, is_anonymous=False)
+
+
+   
+    # data = json.loads(str(poll_message))
+    # json_object = json.loads(str(poll_message))
+    print(poll_message.json['poll']['id'])
+    # poll_message.json
     # with open('mytest.csv', newline='', encoding='utf-8') as csvfile:
     #     reader = csv.DictReader(csvfile)
     
@@ -1177,7 +1309,32 @@ def send_message_to_group(message):
     #             except telebot.apihelper.ApiTelegramException as e:
     #                 print(f"Not delivered. User {row['username']} hasnt yet started a conversation.")
 
+@bot.poll_answer_handler()
+def handle_poll_answer(pollAnswer):
+    
+    # json_object = json.loads(str(pollAnswer))
+    
+    isGoingToCome = False
+    match str(pollAnswer.option_ids):
+        case '[0]':
+            isGoingToCome = True
+        case '[1]':
+            isGoingToCome = False
+        case '[]':
+            isGoingToCome = False
+
+    cursor.execute(f'''INSERT INTO events_users (eventid, userid, isgoingtocome) VALUES (%s, %s, %s) 
+                        ON CONFLICT (eventid, userid)
+                        DO UPDATE SET isgoingtocome = EXCLUDED.isgoingtocome;''', 
+                    (pollAnswer.poll_id, pollAnswer.user.id, isGoingToCome))
+    connection.commit()
+
+
+
+    # telebot.types.PollOption.de_json
+
 
 bot.infinity_polling()
+
 
 
