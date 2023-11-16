@@ -478,6 +478,7 @@ def process_isRepeatFillingProject_step(message, projectName, projectDescription
         exitStepHandler(message, "error")
 
 
+# -------------------------------------------------- Create event steps -----------------------
 
 def process_meetingDate_step(message):
     try:
@@ -548,7 +549,6 @@ _*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mod
     except Exception as ex:
         print("Error: ", ex)
         exitStepHandler(message, "error")
-        
 
 def process_isRepeatFillingEvent_step(message, meetingDate, description, deadline):
     try:
@@ -579,6 +579,8 @@ _*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mod
     except Exception as ex:
         print("Error: ", ex)
         exitStepHandler(message, "error")
+
+
 # -------------------------------------------------- Join to project group -----------------------
 
 def process_requestToJoin_step(message, projectId, authorId):
@@ -1112,6 +1114,35 @@ def handle_acceptRejectRequest(call):
         print(e)
         exitStepHandler(call.message, "error")
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith('need_memo_'))
+def handle_setNeedMemo(call):
+    try:
+        userId = str(call.data).split('_')[2]
+        eventId = str(call.data).split('_')[3]
+
+        cursor.execute(f'''UPDATE events_users SET needmemo = {True} 
+                       WHERE eventid = '{eventId}' and userid = '{userId}';''')
+        connection.commit()
+        
+        bot.send_message(userId, "Запрос на служеюбную записку оформлен.")
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('need_pass_'))
+def handle_setNeedPass(call):
+    try:
+        userId = str(call.data).split('_')[2]
+        eventId = str(call.data).split('_')[3]
+
+        cursor.execute(f'''UPDATE events_users SET needpass = {True} 
+                       WHERE eventid = '{eventId}' and userid = '{userId}';''')
+        connection.commit()
+        
+        bot.send_message(userId, "Запрос на пропуск оформлен.")
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
 
 # -------------------------------------------------- Commands -----------------------
 
@@ -1283,20 +1314,9 @@ def handler_new_member(message):
 def send_message_to_group(message):
 
     chat_id = message.chat.id
-    members_count = bot.get_chat_members_count(chat_id)
+    # members_count = bot.get_chat_members_count(chat_id)
     print(chat_id)
-    # "-4017335152"
-    # 809778477
 
-    question = "Ты идешь на мероприятие?"
-    options = ["Да", "Нет"]
-    poll_message = bot.send_poll(message.chat.id, question, options, is_anonymous=False)
-
-
-   
-    # data = json.loads(str(poll_message))
-    # json_object = json.loads(str(poll_message))
-    print(poll_message.json['poll']['id'])
     # poll_message.json
     # with open('mytest.csv', newline='', encoding='utf-8') as csvfile:
     #     reader = csv.DictReader(csvfile)
@@ -1315,21 +1335,46 @@ def handle_poll_answer(pollAnswer):
     # json_object = json.loads(str(pollAnswer))
     
     isGoingToCome = False
+    needMemo = False
+    needPass = False
+
     match str(pollAnswer.option_ids):
         case '[0]':
             isGoingToCome = True
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            needMemoBtn = types.InlineKeyboardButton('📄 Запросить служебную записку', callback_data=f'need_memo_{pollAnswer.user.id}_{pollAnswer.poll_id}')
+            needPassBtn = types.InlineKeyboardButton('🎫 Нужен пропуск на территорию', callback_data=f'need_pass_{pollAnswer.user.id}_{pollAnswer.poll_id}')
+
+            user = getUserById(pollAnswer.user.id)
+            if user['educationalinstitution'] == 'РЭУ им. Г.В. Плеханова':
+                markup.add(needMemoBtn)
+            else:
+                markup.add(needPassBtn)
+
+            bot.send_message(chat_id=pollAnswer.user.id, text=f"Не забудь про мероприятие {getMeetingDateEventById(pollAnswer.poll_id).strftime('%d.%m.%Y %H:%M')}.", parse_mode="Markdown", reply_markup=markup)
+
         case '[1]':
             isGoingToCome = False
         case '[]':
             isGoingToCome = False
 
-    cursor.execute(f'''INSERT INTO events_users (eventid, userid, isgoingtocome) VALUES (%s, %s, %s) 
+    cursor.execute(f'''INSERT INTO events_users (eventid, userid, isgoingtocome, needmemo, needpass) VALUES (%s, %s, %s,%s, %s) 
                         ON CONFLICT (eventid, userid)
-                        DO UPDATE SET isgoingtocome = EXCLUDED.isgoingtocome;''', 
-                    (pollAnswer.poll_id, pollAnswer.user.id, isGoingToCome))
+                        DO UPDATE SET (isgoingtocome, needmemo, needpass) = (EXCLUDED.isgoingtocome, EXCLUDED.needmemo, EXCLUDED.needpass);''', 
+                    (pollAnswer.poll_id, pollAnswer.user.id, isGoingToCome, needMemo, needPass))
     connection.commit()
 
 
+
+
+def getMeetingDateEventById(eventId):
+
+    cursor.execute(f"SELECT meetingdate FROM events WHERE id='{eventId}'")
+    meetingDate = cursor.fetchone()[0]
+
+    return meetingDate
+# needmemo
+# needpass
 
     # telebot.types.PollOption.de_json
 
