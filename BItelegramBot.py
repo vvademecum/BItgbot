@@ -73,8 +73,12 @@ def process_getUsernameForSelect_step(message):
             msg = bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден. Повторите ввод")
             bot.register_next_step_handler(msg, process_getUsernameForSelect_step)
             return
-        userInfo(message, userId)
-        
+
+        if not isinstance(userId, str):        
+            for user in userId:
+                userInfo(message, user[0])
+        else:
+            userInfo(message, userId)        
     except Exception as ex:
         print("Error: ", ex)
         exitStepHandler(message, "error")
@@ -190,11 +194,12 @@ def process_updateEducationalInstitution_step(message, userId):
             return
 
         cursor.execute(f'''UPDATE users SET course=NULL, 
-                                faculty=NULL, direction=NULL
+                                faculty=NULL, direction=NULL, 
+                                speciality=NULL, "group"=NULL
                                 WHERE id = '{userId}';''')
         connection.commit()
 
-        msg = bot.send_message(message.chat.id, 'Отлично, оставьте свой номер телефона\n(_+79993332211_)', parse_mode="Markdown", reply_markup=keyboard)
+        msg = bot.send_message(message.chat.id, 'Отлично, оставьте свой *номер телефона*\n(_+79993332211_)', parse_mode="Markdown", reply_markup=keyboard)
         bot.register_next_step_handler(msg, process_updatePhoneNum_step, userId) 
     except Exception as e:
         print(e)
@@ -221,7 +226,7 @@ def process_updateFaculty_step(message, userId):
         keyboard.add(types.KeyboardButton(text="1"), types.KeyboardButton(text="2"), types.KeyboardButton(text="3"), types.KeyboardButton(text="4"), types.KeyboardButton(text="5"))
         keyboard.add(types.KeyboardButton(text="↩ Выйти"))
 
-        msg = bot.send_message(message.chat.id, 'На каком курсе вы обучаетесь?', parse_mode="Markdown", reply_markup=keyboard)
+        msg = bot.send_message(message.chat.id, 'На каком *курсе* вы обучаетесь?', parse_mode="Markdown", reply_markup=keyboard)
         bot.register_next_step_handler(msg, process_updateCourse_step, userId) 
     except Exception as e:
         print(e)
@@ -247,7 +252,7 @@ def process_updateCourse_step(message, userId):
         keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         keyboard.add(types.KeyboardButton(text="↩ Выйти"))
 
-        msg = bot.send_message(message.chat.id, 'Укажите Ваше направление подготовки.', parse_mode="Markdown", reply_markup=keyboard)
+        msg = bot.send_message(message.chat.id, 'Укажите Ваше *направление подготовки*.', parse_mode="Markdown", reply_markup=keyboard)
         bot.register_next_step_handler(msg, process_updateDirection_step, userId) 
     except Exception as e:
         print(e)
@@ -267,6 +272,52 @@ def process_updateDirection_step(message, userId):
             return
     
         cursor.execute(f'''UPDATE users SET direction='{direction}'
+                            WHERE id = '{userId}';''')
+        connection.commit()
+
+        msg = bot.send_message(message.chat.id, 'Укажите *специальность*', parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_updateSpeciality_step, userId) 
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_updateSpeciality_step(message, userId):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+    
+        speciality = message.text
+
+        if len(speciality) < 5:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод специальности', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_updateSpeciality_step, userId)
+            return
+    
+        cursor.execute(f'''UPDATE users SET speciality='{speciality}'
+                            WHERE id = '{userId}';''')
+        connection.commit()
+
+        msg = bot.send_message(message.chat.id, 'Укажите *группу*, в которой Вы обучаетесь', parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_updateGroup_step, userId) 
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_updateGroup_step(message, userId):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+    
+        group = message.text
+
+        if len(group) < 4:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод группы', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_updateGroup_step, userId)
+            return
+    
+        cursor.execute(f'''UPDATE users SET "group"='{group}'
                             WHERE id = '{userId}';''')
         connection.commit()
 
@@ -339,7 +390,7 @@ def process_updateEmail_step(message, userId):
 
         additionInfo = ""
         if user['educationalinstitution'] == "РЭУ им. Г.В. Плеханова":
-            additionInfo = f" ({user['course']} курс, {user['faculty']}, по направлению «{user['direction']}»)"
+            additionInfo = f" ({user['course']} курс, {user['faculty']}, по направлению «{user['direction']}», специальность «{user['speciality']}», группа {user['group']})"
         bot.send_message(message.chat.id, f'''Данные обновлены, проверьте корректность:
 
 *ФИО*: _{user['lastname'] if user['lastname'] != None else ""} {user['firstname'] if user['firstname'] != None else ""} {user['patronymic'] if user['patronymic'] != None else ""}_
@@ -752,7 +803,7 @@ def userInfo(message, userId):
 
         additionInfo = ""
         if user['educationalinstitution'] == "РЭУ им. Г.В. Плеханова":
-            additionInfo = f" ({user['course']} курс, {user['faculty']}, по направлению «{user['direction']}»)"
+            additionInfo = f" ({user['course']} курс, {user['faculty']}, по направлению «{user['direction']}», специальность «{user['speciality']}» в группе {user['group']})"
         bot.send_message(message.chat.id, f'''__Информация по пользователю @{filter(user['username'])}__\:
 
 *ФИО*: _{user['lastname'] if user['lastname'] != None else ""} {user['firstname'] if user['firstname'] != None else ""} {user['patronymic'] if user['patronymic'] != None else ""}_
@@ -1028,12 +1079,12 @@ def handle_getUsersExcel(call):
     try:
         query_string = '''SELECT id, username, lastname, firstname, patronymic, 
                                 fieldofactivity, aboutme, educationalinstitution, faculty, course, direction, 
-                                phonenum, email, status FROM users ORDER BY lastname'''
+                                speciality, "group", phonenum, email, status FROM users ORDER BY lastname'''
         filepath = "usersList.xlsx"
 
         export_to_excel(query_string,("username", "lastname", "firstname", "patronymic", 
                                         "fieldofactivity", "aboutme", "educationalinstitution", "faculty", "course", "direction", 
-                                        "phonenum", "email", "status", "projectMember"), filepath)
+                                        "speciality", "group", "phonenum", "email", "status", "projectMember"), filepath)
 
         with open('usersList.xlsx', 'rb') as tmp:
             bot.send_document(call.from_user.id, tmp)
@@ -1079,7 +1130,7 @@ def export_to_excel(query_string, headings, filepath):
         for colno, cell_value in enumerate(row[1:], start = 1):
             
             if filepath.startswith('usersList'):
-                if colno == 13: # projectMember - 1 column
+                if colno == 15: # projectMember - 1 column
                     cursor.execute(f'''SELECT name FROM users_projects
                             INNER JOIN projects ON users_projects.projectid = projects.id
                             WHERE userid = '{itemId}';''')
@@ -1088,8 +1139,8 @@ def export_to_excel(query_string, headings, filepath):
                     for project in projects:
                         projectNames += project[0] + ", "
                     
-                    sheet.cell(row = rowno, column = colno).value = cell_value
-                    sheet.cell(row = rowno, column = colno+1).value = projectNames[:-2]
+                    sheet.cell(row = rowno, column = colno).value = cell_value # status
+                    sheet.cell(row = rowno, column = colno+1).value = projectNames[:-2] # projectsMember
                     continue
             elif filepath.startswith('projectsList'):
                 if colno == 3: # projectMember - 1 column
