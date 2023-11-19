@@ -36,7 +36,7 @@ def process_getUsernameForUpdate_step(message):
             return 
         
         username = message.text.strip('@')
-        userId = getUserIdByUsername(username)
+        userId = getUserIdByUsernameAndFIO(username, "userName")
         if userId == "-":
             msg = bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден. Повторите ввод")
             bot.register_next_step_handler(msg, process_getUsernameForUpdate_step)
@@ -52,9 +52,23 @@ def process_getUsernameForSelect_step(message):
         if message.text == "↩ Выйти":
             exitStepHandler(message, "ok")
             return
+        
+        userInfoMsg = message.text.strip()
 
-        username = message.text.strip('@')
-        userId = getUserIdByUsername(username)
+        dataFormat = ""
+        if userInfoMsg.startswith('@'):
+            userInfoMsg = userInfoMsg.strip('@')
+            dataFormat = "userName"
+        elif len(userInfoMsg.split(' ')) == 1:
+            dataFormat = "lastName"
+        elif len(userInfoMsg.split(' ')) == 2:
+            dataFormat = "lastName_firstName"
+        else:
+            msg = bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден. Повторите ввод")
+            bot.register_next_step_handler(msg, process_getUsernameForSelect_step)
+            return
+
+        userId = getUserIdByUsernameAndFIO(userInfoMsg, dataFormat)
         if userId == "-":
             msg = bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден. Повторите ввод")
             bot.register_next_step_handler(msg, process_getUsernameForSelect_step)
@@ -660,7 +674,7 @@ def getUsernameForSelect(chatId):
     goHomeBtn = types.KeyboardButton(text="↩ Выйти")
     keyboard.add(goHomeBtn)
 
-    msg = bot.send_message(chatId, "Введите никнейм пользователя для отображения данных\n(Пример: @volodin)", reply_markup=keyboard)        
+    msg = bot.send_message(chatId, "Введите данные пользователя в одном из форматов для вывода информации:\n(Пример: *@username*)\n(Пример: *Фамилия*)\n(Пример: *Фамилия Имя*)", reply_markup=keyboard, parse_mode="Markdown")        
     bot.register_next_step_handler(message=msg, callback=process_getUsernameForSelect_step)
 
 def getProjectnameForSelect(chatId):
@@ -784,18 +798,40 @@ def getProjectById(projectId):
                         WHERE id = '{projectId}';''')
     return cursor.fetchone();
 
-def getUserIdByUsername(username):
-    cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM users
-                                WHERE username = '{username}');''')
-    exists = cursor.fetchone()[0]
-    if not exists:
-        return "-"
+def getUserIdByUsernameAndFIO(userInfoMsg, dataFormat):
+    
+    match dataFormat:
+        case "userName":
+            cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM users
+                                    WHERE username = '{userInfoMsg}');''')
+            exists = cursor.fetchone()[0]
+            if not exists: return "-"
 
-    cursor.execute(f'''SELECT id FROM users 
-                        WHERE username = '{username}';''')
-    userId = cursor.fetchone()[0]
-    return userId 
+            cursor.execute(f'''SELECT id FROM users 
+                        WHERE username = '{userInfoMsg}';''')
+            userId = cursor.fetchone()[0]
+            return userId 
+        case "lastName":
+            cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM users
+                                    WHERE lastname = '{userInfoMsg}');''')
+            exists = cursor.fetchone()[0]
+            if not exists: return "-"
 
+            cursor.execute(f'''SELECT id FROM users 
+                        WHERE lastName = '{userInfoMsg}';''')
+            userId = cursor.fetchall()
+            return userId 
+        case "lastName_firstName":
+            cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM users
+                        WHERE lastname = '{userInfoMsg.split(' ')[0]}' and firstname = '{userInfoMsg.split(' ')[1]}');''')
+            exists = cursor.fetchone()[0]
+            if not exists: return "-"
+
+            cursor.execute(f'''SELECT id FROM users 
+                        WHERE lastname = '{userInfoMsg.split(' ')[0]}' and firstname = '{userInfoMsg.split(' ')[1]}';''')
+            userId = cursor.fetchone()[0]
+            return userId 
+    
 def getProjectIdByProjectname(name):
     cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM projects
                                 WHERE name = '{name}');''')
@@ -1124,7 +1160,7 @@ def handle_setNeedMemo(call):
                        WHERE eventid = '{eventId}' and userid = '{userId}';''')
         connection.commit()
         
-        bot.send_message(userId, "Запрос на служеюбную записку оформлен.")
+        bot.send_message(userId, "Запрос на служебную записку оформлен.")
     except Exception as e:
         print(e)
         exitStepHandler(call.message, "error")
@@ -1154,10 +1190,10 @@ def start(message):
     # firstName = message.from_user.first_name
     # lastName = message.from_user.last_name
 
-    # cursor.execute('''INSERT INTO users (id, username, firstName, lastName, status) VALUES (%s, %s, %s, %s, %s) 
+    # cursor.execute('''INSERT INTO users (id, username, firstName, lastName, status) VALUES (%s, %s, %s, %s, '{RESIDENT}') 
     #                         On CONFLICT(id) DO UPDATE
     #                         SET (username, firstName, lastName, status) = (EXCLUDED.username, EXCLUDED.firstName, EXCLUDED.lastName, EXCLUDED.status);''', 
-    #                         (user_id, username, firstName, lastName, 'RESIDENT'))
+    #                         (user_id, username, firstName, lastName))
 
     # connection.commit()
 
@@ -1172,7 +1208,7 @@ def start(message):
 *Обновить информацию о пользователе*: 
 `\/updateUserInfo @username`
 *Просмотреть информацию о пользователе*: 
-`\/getUserInfo @username`
+`\/getUserInfo @username / Фамилия / Фамилия Имя`
 *Просмотреть информацию о пользователе*: 
 `\/getProjectInfo projectName`'''
  
@@ -1186,7 +1222,7 @@ def updateResidentInfo(message):
             return 
         
         username = extract_arg(message.text)[0].strip('@')
-        userId = getUserIdByUsername(username)
+        userId = getUserIdByUsernameAndFIO(username, "userName")
         if userId == "-":
             bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден")
         else:
@@ -1203,13 +1239,31 @@ def getUserInfo(message):
         if getUserById(message.from_user.id)['status'].find("ADMIN") == -1:
             bot.send_message(chat_id=message.chat.id, text= f"Недостаточно прав")
             return 
-        
-        username = extract_arg(message.text)[0].strip('@')
-        userId = getUserIdByUsername(username)
+
+        userInfoMsg = message.text[13:].strip()
+
+        dataFormat = ""
+        if userInfoMsg.startswith('@'):
+            userInfoMsg = userInfoMsg.strip('@')
+            dataFormat = "userName"
+        elif len(userInfoMsg.split(' ')) == 1:
+            dataFormat = "lastName"
+        elif len(userInfoMsg.split(' ')) == 2:
+            dataFormat = "lastName_firstName"
+        else:
+            bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден")
+            return
+
+        userId = getUserIdByUsernameAndFIO(userInfoMsg, dataFormat)
         if userId == "-":
             bot.send_message(chat_id=message.chat.id, text= f"Пользователь не найден")
             return
-        userInfo(message, userId)
+        
+        if not isinstance(userId, str):
+            for user in userId:
+                userInfo(message, user[0])
+        else:
+            userInfo(message, userId)
     except Exception as e:
         print(e)
         exitStepHandler(message, "error")
