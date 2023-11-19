@@ -6,6 +6,10 @@ import re
 import config
 import requests
 import json
+import time
+from threading import Thread
+import schedule
+from datetime import datetime
 import openpyxl
 from openpyxl.styles import NamedStyle, Font, Alignment, Border, Side
 
@@ -645,6 +649,50 @@ _*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mod
         print("Error: ", ex)
         exitStepHandler(message, "error")
 
+def process_getUserNumForSelect_step(message, projectId, partners):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+    
+        numOfUser = message.text.strip()
+
+        if partners.get(str(numOfUser)) is None or not numOfUser.isdigit():
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод номера\n(Пример: 1)', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_getUserNumForSelect_step, projectId, partners)
+            return
+    
+        userFioUsernameString = str(partners[str(numOfUser)])
+        userId = getUserIdByUsernameAndFIO(userFioUsernameString[userFioUsernameString.find('(') + 1 : userFioUsernameString.find(')')].strip('@'), "userName")
+
+        keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+        rejectBtn = types.KeyboardButton("🔴 Отмена")
+        acceptBtn = types.KeyboardButton("🟢 Удалить")
+        keyboard.add(rejectBtn, acceptBtn)
+
+        msg = bot.send_message(message.chat.id, f"Удалить пользователя *«{userFioUsernameString}»* из проекта *«{getProjectById(projectId)['name']}»*?", parse_mode="Markdown", reply_markup=keyboard)
+        bot.register_next_step_handler(msg, process_deletePartner_step, projectId, userId) 
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_deletePartner_step(message, projectId, userId):
+    try:
+        if message.text == "🔴 Отмена":
+            exitStepHandler(message, "ok")
+        elif message.text == "🟢 Удалить":
+            cursor.execute(f'''DELETE FROM users_projects WHERE 
+                                projectid={projectId} and userid='{userId}';''')
+            connection.commit()
+
+            bot.send_message(message.chat.id, f"Пользователь был исключен из команды проекта.", parse_mode="Markdown", reply_markup=genKeyboard(message.from_user.id))
+        else:
+            msg = bot.reply_to(message, 'Вы можете *отменить* удаление или *подтвердить* его.', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_deletePartner_step, projectId, userId)
+        return
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
 
 # -------------------------------------------------- Join to project group -----------------------
 
@@ -662,11 +710,11 @@ def process_requestToJoin_step(message, projectId, authorId):
             acceptBtn = types.InlineKeyboardButton("🟢 Принять", callback_data=f'acceptRequest_{projectId}_{message.from_user.id}')
             keyboard.row(rejectBtn, acceptBtn)
 
-            bot.send_message(authorId, f"Пользователь {fioUser} отправил запрос на вступление в команду проекта *«{filter(getProjectById(projectId)[1])}»*", 
+            bot.send_message(authorId, f"Пользователь {fioUser} отправил запрос на вступление в команду проекта *«{filter(getProjectById(projectId)['name'])}»*", 
                             reply_markup=keyboard, 
                             parse_mode="MarkdownV2")
             
-            bot.send_message(message.from_user.id, f"Ваша заявка на вступление в команду проекта *«{filter(getProjectById(projectId)[1])}»* была отправлена\. Скоро заявитель её рассмотрит и мы уведомим Вас о результате\.", 
+            bot.send_message(message.from_user.id, f"Ваша заявка на вступление в команду проекта *«{filter(getProjectById(projectId)['name'])}»* была отправлена\. Скоро заявитель её рассмотрит и мы уведомим Вас о результате\.", 
                             reply_markup=genKeyboard(message.from_user.id), 
                             parse_mode="MarkdownV2")
         else:
@@ -736,6 +784,29 @@ def getProjectnameForSelect(chatId):
     msg = bot.send_message(chatId, "Введите наименование проекта для отображения данных\n(Пример: TimeTrace)", reply_markup=keyboard)        
     bot.register_next_step_handler(message=msg, callback=process_getProjectnameForSelect_step)
 
+def getUserNumForSelect(chatId, projectId):
+    
+    keyboard = types.ReplyKeyboardMarkup(row_width=4, resize_keyboard=True)
+
+    cursor.execute(f'''SELECT CONCAT(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') FROM users_projects
+                        INNER JOIN users ON users_projects.userid = users.id
+                        WHERE projectid = {projectId} and role = 'PARTNER';''')
+    partnersList = cursor.fetchall()
+
+    partners = {}
+    partnersStr = ""
+    for i in range(0, len(partnersList)):
+        partners[str(i+1)] = partnersList[i][0]
+        keyboard.add(types.KeyboardButton(text=f"{i+1}"))
+        partnersStr += f"{i+1}\. {filter(partnersList[i][0])}\n"
+
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    msg = bot.send_message(chatId, f"{partnersStr}\n_Введите *номер пользователя*, чтобы исключить его из проекта_ \n\(\-\-\> *1\.* Иванов Иван Иванович \(@username\)\)", parse_mode="MarkdownV2", reply_markup=keyboard)        
+    bot.register_next_step_handler(msg, process_getUserNumForSelect_step, projectId, partners)
+
+
 def createNewEvent(chatId):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     goHomeBtn = types.KeyboardButton(text="↩ Выйти")
@@ -769,9 +840,19 @@ def projectInfo(message, projectId):
 
         user = getUserById(author['userid'])
         fioUser = filter(f'{user["lastname"] if user["lastname"] != None else ""} {user["firstname"] if user["firstname"] != None else ""} {user["patronymic"] if user["patronymic"] != None else ""} (@{user["username"]})')
-        
-        bot.send_message(message.chat.id, f''' __Информация о проекте:__
-                            
+
+        aboutProject = "__Информация о проекте:__"
+        keyboard = genKeyboard(message.from_user.id)
+
+        if partners.strip() != "" and getUserById(message.from_user.id)['status'].find("ADMIN") != -1:
+            keyboard = types.InlineKeyboardMarkup(row_width=1)
+            kickPartnerBtn = types.InlineKeyboardButton('Редактировать команду', callback_data=f'deletePartnerFrom_{projectId}')
+            keyboard.add(kickPartnerBtn)
+            aboutProject = ""
+            bot.send_message(message.chat.id, "__Информация о проекте:__", parse_mode="MarkdownV2", reply_markup=genKeyboard(message.from_user.id))
+
+        bot.send_message(message.chat.id, f'''{aboutProject}
+                         
 *Наименование проекта*: _{filter(author['name'])}_
 
 *Описание*: _{filter(author['description'])}_
@@ -781,7 +862,7 @@ def projectInfo(message, projectId):
 *Заявитель*: {fioUser}
 
 {partners}
-    ''', parse_mode="MarkdownV2", reply_markup=genKeyboard(message.from_user.id))
+    ''', parse_mode="MarkdownV2", reply_markup=keyboard)
     except Exception as ex:
         print("Error: ", ex)
         exitStepHandler(message, "error")
@@ -847,7 +928,11 @@ def getUserById(userId):
 def getProjectById(projectId):
     cursor.execute(f'''SELECT * FROM projects 
                         WHERE id = '{projectId}';''')
-    return cursor.fetchone();
+    
+    columns = [desc[0] for desc in cursor.description]
+    items = cursor.fetchone()
+    project = dict(zip(columns, items))
+    return project
 
 def getUserIdByUsernameAndFIO(userInfoMsg, dataFormat):
     
@@ -980,6 +1065,8 @@ def handle_navigation(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('project_'))
 def handle_project_selection(call):
     try:
+        bot.clear_step_handler_by_chat_id(chat_id=call.message.chat.id)
+
         idProject = call.data[8:]
 
         keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -1002,9 +1089,11 @@ def handle_project_selection(call):
         items = cursor.fetchall()
         partners = ""
         alreadyMember = False 
+        isAuthor = False 
 
         if str(author['userid']) == str(call.from_user.id):
             alreadyMember = True
+            isAuthor = True
 
         for partner in items:
             if (str(partner[4]) == str(call.from_user.id) or str(author['userid']) == str(call.from_user.id)):
@@ -1021,7 +1110,12 @@ def handle_project_selection(call):
         if alreadyMember:
             aboutProject = "__Вы уже состоите в команде этого проекта\.__"
             keyboard = genKeyboard(call.from_user.id)
-
+            if partners.strip() != "" and (isAuthor or getUserById(call.from_user.id)['status'].find("ADMIN") != -1):
+                aboutProject = ""
+                keyboard = types.InlineKeyboardMarkup(row_width=1)
+                kickPartnerBtn = types.InlineKeyboardButton('Редактировать команду', callback_data=f'deletePartnerFrom_{idProject}')
+                keyboard.add(kickPartnerBtn)
+                bot.send_message(call.message.chat.id,"__Вы уже состоите в команде этого проекта\.__", parse_mode="MarkdownV2", reply_markup=genKeyboard(call.from_user.id))
         msg = bot.send_message(call.message.chat.id, f''' {aboutProject}
                             
 *Наименование проекта*: _{filter(author['name'])}_
@@ -1175,7 +1269,7 @@ def handle_acceptRejectRequest(call):
         userId = str(call.data).split('_')[2]
         
         if(call.data.startswith('rejectRequest_')):
-            bot.send_message(userId, f"🔴 Ваша заявка на вступленние в проект *«{getProjectById(projectId)[1]}»* была отклонена.", 
+            bot.send_message(userId, f"🔴 Ваша заявка на вступленние в проект *«{getProjectById(projectId)['name']}»* была отклонена.", 
                                 parse_mode="Markdown")
             bot.send_message(call.from_user.id, f"Заявка отклонена.", 
                                 parse_mode="Markdown")
@@ -1192,7 +1286,7 @@ def handle_acceptRejectRequest(call):
             cursor.execute(f"INSERT INTO users_projects (projectid, userid, role) VALUES (%s, %s, %s);", (projectId, userId, 'PARTNER'))
             connection.commit()
 
-            bot.send_message(userId, f"🟢 Ваша заявка на вступленние в проект *«{getProjectById(projectId)[1]}»* была одобрена.", 
+            bot.send_message(userId, f"🟢 Ваша заявка на вступленние в проект *«{getProjectById(projectId)['name']}»* была одобрена.", 
                                 parse_mode="Markdown")
             
             bot.send_message(call.from_user.id, f"Заявка одобрена.", 
@@ -1230,6 +1324,31 @@ def handle_setNeedPass(call):
     except Exception as e:
         print(e)
         exitStepHandler(call.message, "error")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('deletePartnerFrom_'))
+def handle_deletePartnerFrom(call):
+    try:
+        projectId = str(call.data).split('_')[1]
+
+        getUserNumForSelect(call.message.chat.id, projectId)
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
+
+
+    # try:
+    #     projectId = str(call.data).split('_')[1]
+
+    #     cursor.execute(f'''UPDATE events_users SET needpass = {True} 
+    #                    WHERE eventid = '{eventId}' and userid = '{userId}';''')
+    #     connection.commit()
+        
+    #     msg = bot.send_message(call.from_user.id, "Запрос на пропуск оформлен.")
+    #     bo
+    # except Exception as e:
+    #     print(e)
+    #     exitStepHandler(call.message, "error")
+
 
 # -------------------------------------------------- Commands -----------------------
 
@@ -1483,8 +1602,42 @@ def getMeetingDateEventById(eventId):
 
     # telebot.types.PollOption.de_json
 
+# now = datetime.now() 
+# current_time = now.strftime("%d.%m.%Y %H:%M")
+# while True:
+#     time.sleep(1)
+#     print(current_time)
+#     if current_time == '2023-11-19 19:08':#Выставляете ваше время
+#         print('pass')
+#         # bot.send_message("тут айди вашей группы", 'text')
 
-bot.infinity_polling()
+def schedule_checker():
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+def okay():
+    now = datetime.now() 
+    current_time = now.strftime("%Y-%m-%d %H:%M:%S")
+    # print(current_time)
+    print(current_time)
+    cursor.execute(f"SELECT EXISTS(SELECT polldeadline FROM events WHERE isactive=true and polldeadline='{current_time}');")
+    how = cursor.fetchall()
+    print(how)
+    
+    # if current_time == '2023-11-19 19:26:00':
+    #     print("YYYYYYESSSSS")
+
+if __name__ == '__main__':
+    schedule.every(5).seconds.do(okay)
+
+    # schedule.every(30).minutes.do(okay)
+    # .day.at('08:30').do(start)
+    Thread(target=schedule_checker).start()
+    # bot.polling(none_stop=True, interval=0)
+    bot.infinity_polling()
+
+# bot.infinity_polling()
 
 
 
