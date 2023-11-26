@@ -556,13 +556,19 @@ def process_meetingDate_step(message):
             return
         
         meetingDate = message.text
-
-        pattern = re.compile(r'^\d{2}.\d{2}.\d{2} \d{2}:\d{2}$')
-        if not re.match(pattern, meetingDate):
+        
+        now = datetime.now()
+        try:
+            dt = datetime.strptime(meetingDate, "%d.%m.%y %H:%M")
+            if dt <= now:
+                msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени мероприятия:\n(Пример: _18.11.23 17:00_)', parse_mode="Markdown")
+                bot.register_next_step_handler(msg, process_meetingDate_step)                
+                return
+        except Exception as e:
             msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени мероприятия:\n(Пример: _18.11.23 17:00_)', parse_mode="Markdown")
             bot.register_next_step_handler(msg, process_meetingDate_step)
             return
-        
+    
         msg = bot.reply_to(message, 'Информация о мероприятии и описание:', parse_mode="Markdown")
         bot.register_next_step_handler(msg, process_descriptionEvent_step, meetingDate) 
         
@@ -598,8 +604,17 @@ def process_deadlineEvent_step(message, meetingDate, description):
         
         deadline = message.text
 
-        pattern = re.compile(r'^\d{2}.\d{2}.\d{2} \d{2}:\d{2}$')
-        if not re.match(pattern, deadline):
+        now = datetime.now()
+        try:
+            dt = datetime.strptime(deadline, "%d.%m.%y %H:%M")
+            deadlineMin = int(dt.strftime('%M'))
+
+            if dt <= now or dt >= datetime.strptime(meetingDate, "%d.%m.%y %H:%M") or deadlineMin % 5 != 0:
+                msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени окончания голосования\n(Пример: _17.11.23 21:00_)', parse_mode="Markdown")
+                bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, description)
+                return
+            
+        except Exception as e:
             msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени окончания голосования\n(Пример: _17.11.23 21:00_)', parse_mode="Markdown")
             bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, description)
             return
@@ -627,11 +642,11 @@ def process_isRepeatFillingEvent_step(message, meetingDate, description, deadlin
 
             question = meetingDate
             options = ["Приду", "Не смогу"]
-            bot.send_message(chat_id="-4017335152", text=f'''*{filter(meetingDate)}* состоится новое мероприятие\!
+            bot.send_message(chat_id=config.RESIDENT_GROUP_ID, text=f'''*{filter(meetingDate)}* состоится новое мероприятие\!
 {filter(description)}
 
 _*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mode="MarkdownV2")
-            pollMessage = bot.send_poll(chat_id="-4017335152", question=question, options=options, is_anonymous=False)
+            pollMessage = bot.send_poll(chat_id=config.RESIDENT_GROUP_ID, question=question, options=options, is_anonymous=False)
 
             meetingDate = f"{meetingDate.split('.')[1]}.{meetingDate.split('.')[0]}.{meetingDate[6:]}"
             deadline = f"{deadline.split('.')[1]}.{deadline.split('.')[0]}.{deadline[6:]}"
@@ -785,7 +800,6 @@ def getProjectnameForSelect(chatId):
     bot.register_next_step_handler(message=msg, callback=process_getProjectnameForSelect_step)
 
 def getUserNumForSelect(chatId, projectId):
-    
     keyboard = types.ReplyKeyboardMarkup(row_width=4, resize_keyboard=True)
 
     cursor.execute(f'''SELECT CONCAT(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') FROM users_projects
@@ -805,7 +819,6 @@ def getUserNumForSelect(chatId, projectId):
 
     msg = bot.send_message(chatId, f"{partnersStr}\n_Введите *номер пользователя*, чтобы исключить его из проекта_ \n\(\-\-\> *1\.* Иванов Иван Иванович \(@username\)\)", parse_mode="MarkdownV2", reply_markup=keyboard)        
     bot.register_next_step_handler(msg, process_getUserNumForSelect_step, projectId, partners)
-
 
 def createNewEvent(chatId):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
@@ -1176,9 +1189,9 @@ def handle_getUsersExcel(call):
                                 speciality, "group", phonenum, email, status FROM users ORDER BY lastname'''
         filepath = "usersList.xlsx"
 
-        export_to_excel(query_string,("username", "lastname", "firstname", "patronymic", 
-                                        "fieldofactivity", "aboutme", "educationalinstitution", "faculty", "course", "direction", 
-                                        "speciality", "group", "phonenum", "email", "status", "projectMember"), filepath)
+        export_to_excel(query_string,("Имя пользователя", "Фамилия", "Имя", "Отчество", 
+                                        "Род деятельности", "О себе", "Образовательное учреждение", "Факультет", "Курс", "Направление", 
+                                        "Специальность", "Группа", "Номер тел.", "Email", "Роли", "Участник проектов"), filepath)
 
         with open('usersList.xlsx', 'rb') as tmp:
             bot.send_document(call.from_user.id, tmp)
@@ -1192,7 +1205,7 @@ def handle_getProjectsExcel(call):
         query_string = '''SELECT * FROM projects ORDER BY name'''
         filepath = "projectsList.xlsx"
 
-        export_to_excel(query_string,("name", "desription", "category", "author", "partners"), filepath)
+        export_to_excel(query_string,("Наименование", "Описание", "Категория", "Заявитель", "Партнеры"), filepath)
 
         with open('projectsList.xlsx', 'rb') as tmp:
             bot.send_document(call.from_user.id, tmp)
@@ -1222,7 +1235,19 @@ def export_to_excel(query_string, headings, filepath):
     for rowno, row in enumerate(data, start = 2):
         itemId = row[0]
         for colno, cell_value in enumerate(row[1:], start = 1):
-            
+            if filepath.startswith('usersList'):
+                if colno == 15: # projectMember - 1 column
+                    cursor.execute(f'''SELECT name FROM users_projects
+                            INNER JOIN projects ON users_projects.projectid = projects.id
+                            WHERE userid = '{itemId}';''')
+                    projects = cursor.fetchall()
+                    projectNames = ""
+                    for project in projects:
+                        projectNames += project[0] + ", "
+                    
+                    sheet.cell(row = rowno, column = colno).value = cell_value # status
+                    sheet.cell(row = rowno, column = colno+1).value = projectNames[:-2] # projectsMember
+                    continue
             if filepath.startswith('usersList'):
                 if colno == 15: # projectMember - 1 column
                     cursor.execute(f'''SELECT name FROM users_projects
@@ -1379,7 +1404,7 @@ def start(message):
 `\/updateUserInfo @username`
 *Просмотреть информацию о пользователе*: 
 `\/getUserInfo @username / Фамилия / Фамилия Имя`
-*Просмотреть информацию о пользователе*: 
+*Просмотреть информацию о проекте*: 
 `\/getProjectInfo projectName`'''
  
     bot.send_message(chat_id=message.chat.id, text= helloTxt, reply_markup=genKeyboard(message.from_user.id), parse_mode="MarkdownV2")
@@ -1555,9 +1580,6 @@ def send_message_to_group(message):
 
 @bot.poll_answer_handler()
 def handle_poll_answer(pollAnswer):
-    
-    # json_object = json.loads(str(pollAnswer))
-    
     isGoingToCome = False
     needMemo = False
     needPass = False
@@ -1589,52 +1611,73 @@ def handle_poll_answer(pollAnswer):
     connection.commit()
 
 
-
-
 def getMeetingDateEventById(eventId):
-
     cursor.execute(f"SELECT meetingdate FROM events WHERE id='{eventId}'")
     meetingDate = cursor.fetchone()[0]
 
     return meetingDate
-# needmemo
-# needpass
-
-    # telebot.types.PollOption.de_json
-
-# now = datetime.now() 
-# current_time = now.strftime("%d.%m.%Y %H:%M")
-# while True:
-#     time.sleep(1)
-#     print(current_time)
-#     if current_time == '2023-11-19 19:08':#Выставляете ваше время
-#         print('pass')
-#         # bot.send_message("тут айди вашей группы", 'text')
 
 def schedule_checker():
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-def okay():
+def isTimeToNewsletterForDocManager():
     now = datetime.now() 
-    current_time = now.strftime("%Y-%m-%d %H:%M:%S")
+    current_time = now.strftime("%Y-%m-%d %H:%M")
     # print(current_time)
     print(current_time)
-    cursor.execute(f"SELECT EXISTS(SELECT polldeadline FROM events WHERE isactive=true and polldeadline='{current_time}');")
-    how = cursor.fetchall()
-    print(how)
-    
-    # if current_time == '2023-11-19 19:26:00':
-    #     print("YYYYYYESSSSS")
+    cursor.execute(f'''SELECT id, polldeadline FROM events WHERE 
+                        EXISTS (SELECT polldeadline FROM events 
+        	            WHERE isactive=true and polldeadline='{current_time}');''')
+    docManagerIds = cursor.fetchall()
+
+    if len(docManagerIds) > 0:
+        for id in docManagerIds:
+            
+            cursor.execute("SELECT id FROM users WHERE status && '{DOCUMENT_MANAGER}';")
+            docManagerId = cursor.fetchone()[0]
+
+            cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' and isgoingtocome=true;''')
+            countOfPlanningToCome = cursor.fetchone()[0]
+            cursor.execute(f'''SELECT COUNT(*) FROM events_users 
+                           INNER JOIN users ON events_users.userid=users.id
+                           WHERE eventid='{id[0]}' and isgoingtocome=true and educationalinstitution='РЭУ им. Г.В. Плеханова';''')
+            countOfFromREA = cursor.fetchone()[0]
+            countOfFromAnother = countOfPlanningToCome - countOfFromREA
+            cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' and isgoingtocome=true and needmemo=true;''')
+            countOfneedMemo = cursor.fetchone()[0]
+            cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' and isgoingtocome=true and needpass=true;''')
+            countOfneedPass = cursor.fetchone()[0]
+
+            bot.send_message(docManagerId, f'''На мероприятие _{filter(str(getMeetingDateEventById(id[0]).strftime('%d.%m.%Y %H:%M')))}_:
+*Зарегистрировалось:* {countOfPlanningToCome} чел\.
+*Резиденты из РЭУ:* {countOfFromREA} чел\.
+*Резиденты из других ВУЗов:* {countOfFromAnother} чел\.
+*Запросили служебную записку:* {countOfneedMemo} чел\.
+*Запросили пропуск на территорию:* {countOfneedPass} чел\.''', parse_mode="MarkdownV2")
+
 
 if __name__ == '__main__':
-    schedule.every(5).seconds.do(okay)
+    schedule.every().hour.at(":10").do(isTimeToNewsletterForDocManager)
+    schedule.every().hour.at(":15").do(isTimeToNewsletterForDocManager)
 
-    # schedule.every(30).minutes.do(okay)
-    # .day.at('08:30').do(start)
+    schedule.every().hour.at(":20").do(isTimeToNewsletterForDocManager)
+    schedule.every().hour.at(":25").do(isTimeToNewsletterForDocManager)
+
+    schedule.every().hour.at(":30").do(isTimeToNewsletterForDocManager)
+    schedule.every().hour.at(":35").do(isTimeToNewsletterForDocManager)
+
+    schedule.every().hour.at(":40").do(isTimeToNewsletterForDocManager)
+    schedule.every().hour.at(":45").do(isTimeToNewsletterForDocManager)
+
+    schedule.every().hour.at(":50").do(isTimeToNewsletterForDocManager)
+    schedule.every().hour.at(":55").do(isTimeToNewsletterForDocManager)
+
+    schedule.every().hour.at(":00").do(isTimeToNewsletterForDocManager)
+    schedule.every().hour.at(":05").do(isTimeToNewsletterForDocManager)
+
     Thread(target=schedule_checker).start()
-    # bot.polling(none_stop=True, interval=0)
     bot.infinity_polling()
 
 # bot.infinity_polling()
