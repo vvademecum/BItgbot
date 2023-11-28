@@ -546,6 +546,23 @@ def process_isRepeatFillingProject_step(message, projectName, projectDescription
         print("Error: ", ex)
         exitStepHandler(message, "error")
 
+def process_deletePartner_step(message, projectId, userId):
+    try:
+        if message.text == "🔴 Отмена":
+            exitStepHandler(message, "ok")
+        elif message.text == "🟢 Удалить":
+            cursor.execute(f'''DELETE FROM users_projects WHERE 
+                                projectid={projectId} and userid='{userId}';''')
+            connection.commit()
+
+            bot.send_message(message.chat.id, f"Пользователь был исключен из команды проекта.", parse_mode="Markdown", reply_markup=genKeyboard(message.from_user.id))
+        else:
+            msg = bot.reply_to(message, 'Вы можете *отменить* удаление или *подтвердить* его.', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_deletePartner_step, projectId, userId)
+        return
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
 
 # -------------------------------------------------- Create event steps -----------------------
 
@@ -569,14 +586,34 @@ def process_meetingDate_step(message):
             bot.register_next_step_handler(msg, process_meetingDate_step)
             return
     
-        msg = bot.reply_to(message, 'Информация о мероприятии и описание:', parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_descriptionEvent_step, meetingDate) 
+        msg = bot.reply_to(message, 'Наименование мероприятия:', parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_nameEvent_step, meetingDate) 
         
     except Exception as ex:
         print("Error: ", ex)
         exitStepHandler(message, "error")
 
-def process_descriptionEvent_step(message, meetingDate):
+def process_nameEvent_step(message, meetingDate):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+        
+        nameEvent = message.text
+
+        if len(nameEvent) < 5:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод наименования мероприятия', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_nameEvent_step, meetingDate)
+            return
+
+        msg = bot.reply_to(message, 'Информация о мероприятии и описание:', parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_descriptionEvent_step, meetingDate, nameEvent) 
+        
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
+
+def process_descriptionEvent_step(message, meetingDate, nameEvent):
     try:
         if message.text == "↩ Выйти":
             exitStepHandler(message, "ok")
@@ -584,19 +621,19 @@ def process_descriptionEvent_step(message, meetingDate):
         
         description = message.text
 
-        if len(description) < 10:
+        if len(description) < 8:
             msg = bot.reply_to(message, 'Неверный формат, повторите ввод информации о мероприятии и описания', parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_descriptionEvent_step, meetingDate)
+            bot.register_next_step_handler(msg, process_descriptionEvent_step, meetingDate, nameEvent)
             return
 
         msg = bot.reply_to(message, 'Дедлайн голосования:\n(_День.Месяц.Год Час:Мин_)', parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, description) 
+        bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, nameEvent, description) 
         
     except Exception as ex:
         print("Error: ", ex)
         exitStepHandler(message, "error")
 
-def process_deadlineEvent_step(message, meetingDate, description):
+def process_deadlineEvent_step(message, meetingDate, nameEvent, description):
     try:
         if message.text == "↩ Выйти":
             exitStepHandler(message, "ok")
@@ -611,12 +648,12 @@ def process_deadlineEvent_step(message, meetingDate, description):
 
             if dt <= now or dt >= datetime.strptime(meetingDate, "%d.%m.%y %H:%M") or deadlineMin % 5 != 0:
                 msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени окончания голосования\n(Пример: _17.11.23 21:00_)', parse_mode="Markdown")
-                bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, description)
+                bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, nameEvent, description)
                 return
             
         except Exception as e:
             msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени окончания голосования\n(Пример: _17.11.23 21:00_)', parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, description)
+            bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, nameEvent, description)
             return
 
         markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
@@ -625,24 +662,26 @@ def process_deadlineEvent_step(message, meetingDate, description):
         msg = bot.send_message(message.chat.id , f'''__Опрос будет выглядеть следующим образом\. Отправляем?__
                            
 *{filter(meetingDate)}* состоится новое мероприятие\!
+__{filter(nameEvent)}__
 {filter(description)}
 
 _*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mode="MarkdownV2", reply_markup=markup)
-        bot.register_next_step_handler(msg, process_isRepeatFillingEvent_step, meetingDate, description, deadline) 
+        bot.register_next_step_handler(msg, process_isRepeatFillingEvent_step, meetingDate, nameEvent, description, deadline) 
         
     except Exception as ex:
         print("Error: ", ex)
         exitStepHandler(message, "error")
 
-def process_isRepeatFillingEvent_step(message, meetingDate, description, deadline):
+def process_isRepeatFillingEvent_step(message, meetingDate, nameEvent, description, deadline):
     try:
         if message.text == "🔴 Повторить ввод":
             createNewEvent(message.chat.id)
         elif message.text == "🟢 Все верно":
 
-            question = meetingDate
+            question = f"{nameEvent} - {meetingDate}"
             options = ["Приду", "Не смогу"]
             bot.send_message(chat_id=config.RESIDENT_GROUP_ID, text=f'''*{filter(meetingDate)}* состоится новое мероприятие\!
+__{filter(nameEvent)}__
 {filter(description)}
 
 _*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mode="MarkdownV2")
@@ -651,8 +690,8 @@ _*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mod
             meetingDate = f"{meetingDate.split('.')[1]}.{meetingDate.split('.')[0]}.{meetingDate[6:]}"
             deadline = f"{deadline.split('.')[1]}.{deadline.split('.')[0]}.{deadline[6:]}"
 
-            cursor.execute(f'''INSERT INTO events (id, description, meetingdate, isactive, polldeadline) VALUES (%s, %s, %s, %s, %s)''', 
-                           (pollMessage.json['poll']['id'], description, meetingDate, True, deadline))
+            cursor.execute(f'''INSERT INTO events (id, name, description, meetingdate, isactive, polldeadline) VALUES (%s, %s, %s, %s, %s, %s)''', 
+                           (pollMessage.json['poll']['id'], nameEvent, description, meetingDate, True, deadline))
             connection.commit()
             
             exitStepHandler(message, "ok")
@@ -691,23 +730,35 @@ def process_getUserNumForSelect_step(message, projectId, partners):
         print(e)
         exitStepHandler(message, "error")
 
-def process_deletePartner_step(message, projectId, userId):
+def process_fillPassportInfo_step(message, eventId):
     try:
-        if message.text == "🔴 Отмена":
-            exitStepHandler(message, "ok")
-        elif message.text == "🟢 Удалить":
-            cursor.execute(f'''DELETE FROM users_projects WHERE 
-                                projectid={projectId} and userid='{userId}';''')
-            connection.commit()
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "notCompleted")
+            return
 
-            bot.send_message(message.chat.id, f"Пользователь был исключен из команды проекта.", parse_mode="Markdown", reply_markup=genKeyboard(message.from_user.id))
-        else:
-            msg = bot.reply_to(message, 'Вы можете *отменить* удаление или *подтвердить* его.', parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_deletePartner_step, projectId, userId)
-        return
+        pattern = r'^\d{4} \d{6}$'
+        if not re.match(pattern, message.text.strip()):
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод данных\n(Пример: _2233 445566_)', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_fillPassportInfo_step, eventId)
+            return
+        
+        series = message.text.strip().split(' ')[0]
+        number = message.text.strip().split(' ')[1]
+
+        cursor.execute(f'''UPDATE users SET seriesPassport='{series}', numberPassport='{number}'
+                            WHERE id = '{message.from_user.id}';''')
+        connection.commit()
+
+        cursor.execute(f'''UPDATE events_users SET needpass = {True} 
+                        WHERE eventid = '{eventId}' and userid = '{message.from_user.id}';''')
+        connection.commit()
+
+        bot.send_message(message.from_user.id, "Данные сохранены, запрос на пропуск оформлен.", reply_markup=genKeyboard(message.from_user.id))
     except Exception as e:
         print(e)
         exitStepHandler(message, "error")
+
+
 
 # -------------------------------------------------- Join to project group -----------------------
 
@@ -744,9 +795,14 @@ def process_requestToJoin_step(message, projectId, authorId):
 # -------------------------------------------------- Auxiliary -----------------------
 
 def exitStepHandler(message, status):
-    text = "👌"
-    if status == "error": 
-        text = "Произошла ошибка, попробуйте позже."
+    text = ""
+    match status:
+        case "error":
+            text = "Произошла ошибка, попробуйте позже."
+        case "notCompleted":
+            text = "Заявка на получение пропуска *не оформлена*, так как паспортные данные не заполнены."
+        case _:
+            text = "👌"
 
     bot.send_message(chat_id=message.chat.id, text=text, parse_mode="Markdown", reply_markup=genKeyboard(message.from_user.id))
     bot.clear_step_handler_by_chat_id(chat_id=message.chat.id)
@@ -825,8 +881,16 @@ def createNewEvent(chatId):
     goHomeBtn = types.KeyboardButton(text="↩ Выйти")
     keyboard.add(goHomeBtn)
 
-    msg = bot.send_message(chat_id=chatId, text=f"Введите дату проведения мероприятия\n(_День.Месяц.Год Час:Мин_)", parse_mode="Markdown", reply_markup=keyboard)
+    msg = bot.send_message(chat_id=chatId, text=f"Введите дату проведения мероприятия:\n(_День.Месяц.Год Час:Мин_)", parse_mode="Markdown", reply_markup=keyboard)
     bot.register_next_step_handler(msg, process_meetingDate_step)
+
+def fillPassportInfo(chatId, eventId):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    msg = bot.send_message(chat_id=chatId, text=f"Введите серию и номер паспорта через пробел:\n(_1122 334455_)", parse_mode="Markdown", reply_markup=keyboard)
+    bot.register_next_step_handler(msg, process_fillPassportInfo_step, eventId)
 
 # -------------------------------------------------- Requests -----------------------
 
@@ -1062,18 +1126,21 @@ def genKeyboard(userId):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prev_') or call.data.startswith('next_'))
 def handle_navigation(call):
-    countOfProjects = getProjects(1)[1]
-    action, page = call.data.split('_')
+    try:
+        countOfProjects = getProjects(1)[1]
+        action, page = call.data.split('_')
 
-    if action == 'prev':
-        current_page = max(1, int(page) - 1)
-    elif action == 'next':
-        current_page = min((countOfProjects - 1) // 8 + 1, int(page) + 1)
+        if action == 'prev':
+            current_page = max(1, int(page) - 1)
+        elif action == 'next':
+            current_page = min((countOfProjects - 1) // 8 + 1, int(page) + 1)
 
-    projects = getProjects(current_page)[0]
+        projects = getProjects(current_page)[0]
 
-    keyboard = create_inline_keyboard(projects, current_page)
-    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+        keyboard = create_inline_keyboard(projects, current_page)
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+    except Exception as e:
+        print("Error in handle_navigation project keyboard: " + e)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('project_'))
 def handle_project_selection(call):
@@ -1341,11 +1408,18 @@ def handle_setNeedPass(call):
         userId = str(call.data).split('_')[2]
         eventId = str(call.data).split('_')[3]
 
-        cursor.execute(f'''UPDATE events_users SET needpass = {True} 
-                       WHERE eventid = '{eventId}' and userid = '{userId}';''')
-        connection.commit()
-        
-        bot.send_message(userId, "Запрос на пропуск оформлен.")
+        cursor.execute(f'''SELECT (seriesPassport IS NOT NULL AND numberPassport IS NOT NULL) AS indicatedData 
+                            FROM users WHERE id = '{userId}';''')
+        indicatedData = cursor.fetchone()[0]
+
+        if not indicatedData:
+            fillPassportInfo(call.message.chat.id, eventId)
+        else:
+            cursor.execute(f'''UPDATE events_users SET needpass = {True} 
+                        WHERE eventid = '{eventId}' and userid = '{userId}';''')
+            connection.commit()
+
+            bot.send_message(userId, "Запрос на пропуск оформлен.")
     except Exception as e:
         print(e)
         exitStepHandler(call.message, "error")
@@ -1597,7 +1671,8 @@ def handle_poll_answer(pollAnswer):
             else:
                 markup.add(needPassBtn)
 
-            bot.send_message(chat_id=pollAnswer.user.id, text=f"Не забудь про мероприятие {getMeetingDateEventById(pollAnswer.poll_id).strftime('%d.%m.%Y %H:%M')}.", parse_mode="Markdown", reply_markup=markup)
+            NameAndMeetingDate = getEventNameAndMeetingDateById(pollAnswer.poll_id)
+            bot.send_message(chat_id=pollAnswer.user.id, text=f"Не забудь про мероприятие *«{filter(NameAndMeetingDate[0])}»* \- _{filter(str(NameAndMeetingDate[1].strftime('%d.%m.%Y %H:%M')))}_\.", parse_mode="MarkdownV2", reply_markup=markup)
 
         case '[1]':
             isGoingToCome = False
@@ -1611,11 +1686,11 @@ def handle_poll_answer(pollAnswer):
     connection.commit()
 
 
-def getMeetingDateEventById(eventId):
-    cursor.execute(f"SELECT meetingdate FROM events WHERE id='{eventId}'")
-    meetingDate = cursor.fetchone()[0]
+def getEventNameAndMeetingDateById(eventId):
+    cursor.execute(f"SELECT name, meetingdate FROM events WHERE id='{eventId}'")
+    NameAndMeetingDate = cursor.fetchone()
 
-    return meetingDate
+    return NameAndMeetingDate
 
 def schedule_checker():
     while True:
@@ -1623,64 +1698,81 @@ def schedule_checker():
         time.sleep(1)
 
 def isTimeToNewsletterForDocManager():
-    now = datetime.now() 
-    current_time = now.strftime("%Y-%m-%d %H:%M")
-    # print(current_time)
-    print(current_time)
-    cursor.execute(f'''SELECT id, polldeadline FROM events WHERE 
-                        EXISTS (SELECT polldeadline FROM events 
-        	            WHERE isactive=true and polldeadline='{current_time}');''')
-    docManagerIds = cursor.fetchall()
+    try:
+        now = datetime.now() 
+        current_time = now.strftime("%Y-%m-%d %H:%M")
+        print(current_time)
 
-    if len(docManagerIds) > 0:
-        for id in docManagerIds:
-            
+        cursor.execute(f'''SELECT id, polldeadline FROM events WHERE 
+                            EXISTS (SELECT polldeadline FROM events 
+                            WHERE isactive=true and polldeadline='{current_time}') 
+                            and isactive=true and polldeadline='{current_time}';''')
+        events = cursor.fetchall()
+
+        eventDeadlineNewsletter(events)
+    except Exception as e:
+        print("Error in isTimeToNewsletterForDocManager(): " + e)
+    
+def eventDeadlineNewsletter(events):
+    try:
+        if len(events) > 0:
             cursor.execute("SELECT id FROM users WHERE status && '{DOCUMENT_MANAGER}';")
             docManagerId = cursor.fetchone()[0]
 
-            cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' and isgoingtocome=true;''')
-            countOfPlanningToCome = cursor.fetchone()[0]
-            cursor.execute(f'''SELECT COUNT(*) FROM events_users 
-                           INNER JOIN users ON events_users.userid=users.id
-                           WHERE eventid='{id[0]}' and isgoingtocome=true and educationalinstitution='РЭУ им. Г.В. Плеханова';''')
-            countOfFromREA = cursor.fetchone()[0]
-            countOfFromAnother = countOfPlanningToCome - countOfFromREA
-            cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' and isgoingtocome=true and needmemo=true;''')
-            countOfneedMemo = cursor.fetchone()[0]
-            cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' and isgoingtocome=true and needpass=true;''')
-            countOfneedPass = cursor.fetchone()[0]
+            for id in events:
+                cursor.execute(f"UPDATE events SET isactive = false WHERE id = '{id[0]}';")
+                connection.commit()
 
-            bot.send_message(docManagerId, f'''На мероприятие _{filter(str(getMeetingDateEventById(id[0]).strftime('%d.%m.%Y %H:%M')))}_:
+                cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' AND isgoingtocome = true;''')
+                countOfPlanningToCome = cursor.fetchone()[0]
+
+                cursor.execute(f'''SELECT COUNT(*) FROM events_users 
+                            INNER JOIN users ON events_users.userid=users.id
+                            WHERE eventid='{id[0]}' AND isgoingtocome=true AND educationalinstitution='РЭУ им. Г.В. Плеханова';''')
+                countOfFromREA = cursor.fetchone()[0]
+                countOfFromAnother = countOfPlanningToCome - countOfFromREA
+
+                cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' AND isgoingtocome = true AND needmemo = true;''')
+                countOfneedMemo = cursor.fetchone()[0]
+
+                cursor.execute(f'''SELECT COUNT(*) FROM events_users WHERE eventid='{id[0]}' AND isgoingtocome = true AND needpass = true;''')
+                countOfneedPass = cursor.fetchone()[0]
+
+                NameAndMeetingDate = getEventNameAndMeetingDateById(id[0])
+
+                bot.send_message(docManagerId, f'''На мероприятие *«{filter(NameAndMeetingDate[0])}»* \- _{filter(str(NameAndMeetingDate[1].strftime('%d.%m.%Y %H:%M')))}_:
 *Зарегистрировалось:* {countOfPlanningToCome} чел\.
 *Резиденты из РЭУ:* {countOfFromREA} чел\.
 *Резиденты из других ВУЗов:* {countOfFromAnother} чел\.
 *Запросили служебную записку:* {countOfneedMemo} чел\.
 *Запросили пропуск на территорию:* {countOfneedPass} чел\.''', parse_mode="MarkdownV2")
+                
+                eventDeadlineNewsletterForResidents(id[0])
+    except Exception as e:
+        print("Error in Newsletter For DocManager: " + e)
+
+# for Pass - 
+
+def eventDeadlineNewsletterForResidents(eventId):
+    try:
+        cursor.execute(f'''SELECT userid FROM events_users WHERE eventid='{eventId}' AND isgoingtocome = true;''')
+        isGoingToComeUserIds = cursor.fetchall()
+        NameAndMeetingDate = getEventNameAndMeetingDateById(eventId)
+
+        for userId in isGoingToComeUserIds:
+            bot.send_message(userId[0], f'''Привет\! Мы ждем тебя на мероприятии *«{filter(NameAndMeetingDate[0])}»*, на которое ты записался\! Оно состоится _{filter(str(NameAndMeetingDate[1].strftime('%d.%m.%Y %H:%M')))}_\.''', parse_mode="MarkdownV2")
+    except Exception as e:
+        print("Error in Newsletter For Residents: " + e)
 
 
 if __name__ == '__main__':
-    schedule.every().hour.at(":10").do(isTimeToNewsletterForDocManager)
-    schedule.every().hour.at(":15").do(isTimeToNewsletterForDocManager)
-
-    schedule.every().hour.at(":20").do(isTimeToNewsletterForDocManager)
-    schedule.every().hour.at(":25").do(isTimeToNewsletterForDocManager)
-
-    schedule.every().hour.at(":30").do(isTimeToNewsletterForDocManager)
-    schedule.every().hour.at(":35").do(isTimeToNewsletterForDocManager)
-
-    schedule.every().hour.at(":40").do(isTimeToNewsletterForDocManager)
-    schedule.every().hour.at(":45").do(isTimeToNewsletterForDocManager)
-
-    schedule.every().hour.at(":50").do(isTimeToNewsletterForDocManager)
-    schedule.every().hour.at(":55").do(isTimeToNewsletterForDocManager)
-
-    schedule.every().hour.at(":00").do(isTimeToNewsletterForDocManager)
-    schedule.every().hour.at(":05").do(isTimeToNewsletterForDocManager)
+    for fiveMin in range(0, 60, 5):
+        everyFive = ""
+        if fiveMin < 10 or fiveMin == 0:
+            everyFive = ":0" + str(fiveMin)
+        else:
+            everyFive = ":" + str(fiveMin)
+        schedule.every().hour.at(everyFive).do(isTimeToNewsletterForDocManager)
 
     Thread(target=schedule_checker).start()
     bot.infinity_polling()
-
-# bot.infinity_polling()
-
-
-
