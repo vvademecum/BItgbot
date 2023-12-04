@@ -1,6 +1,5 @@
 from telebot import types, telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import csv
 import psycopg2
 import re
 import config
@@ -9,7 +8,7 @@ import json
 import time
 from threading import Thread
 import schedule
-from datetime import datetime
+from datetime import datetime, calendar
 import openpyxl
 from openpyxl.styles import NamedStyle, Font, Alignment, Border, Side
 
@@ -28,7 +27,6 @@ print('[INFO] PostgreSQL start')
 
 
 # -------------------------------------------------- Update user info steps -----------------------
-
 
 def process_getUsernameForUpdate_step(message):
     try:
@@ -564,6 +562,7 @@ def process_deletePartner_step(message, projectId, userId):
         print(e)
         exitStepHandler(message, "error")
 
+
 # -------------------------------------------------- Create event steps -----------------------
 
 def process_meetingDate_step(message):
@@ -759,6 +758,126 @@ def process_fillPassportInfo_step(message, eventId):
         exitStepHandler(message, "error")
 
 
+def process_nameOfPostVacancy_step(message, projectId):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+
+        post = message.text
+
+        if len(post) < 3:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод наименования должности:', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_nameOfPostVacancy_step, projectId)
+            return
+
+        msg = bot.reply_to(message, f'Требования вакансии *«{filter(post)}»*\:', parse_mode="MarkdownV2")
+        bot.register_next_step_handler(msg, process_requirementsVacancy_step, projectId, post) 
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_requirementsVacancy_step(message, projectId, post):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+
+        requirements = message.text
+
+        if len(requirements) < 8:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод требований вакансии:', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_requirementsVacancy_step, projectId, post)
+            return
+
+        msg = bot.reply_to(message, f'Описание вакансии *«{filter(post)}»*\:', parse_mode="MarkdownV2")
+        bot.register_next_step_handler(msg, process_descriptionVacancy_step, projectId, post, requirements)  
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_descriptionVacancy_step(message, projectId, post, requirements):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+
+        description = message.text
+
+        if len(description) < 8:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод описание вакансии:', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_descriptionVacancy_step, projectId, post, requirements)
+            return
+
+        msg = bot.reply_to(message, f'Введите контактные данные, по которым будут связываться по данной вакансии\:\n\(_TG\: \@username\; mail\: exmpl@gmail\.com\; \+79993457676\; Иванов Иван_\)', parse_mode="MarkdownV2")
+        bot.register_next_step_handler(msg, process_contactsVacancy_step, projectId, post, requirements, description)  
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_contactsVacancy_step(message, projectId, post, requirements, description):
+    try:
+        if message.text == "↩ Выйти":
+            exitStepHandler(message, "ok")
+            return
+
+        contacts = message.text
+
+        if len(contacts) < 4:
+            msg = bot.reply_to(message, 'Неверный формат, повторите ввод контактных данных:\n\(_TG\: \@username\; mail\: exmpl@mail\.ru\; \+79993457676\; Иванов Иван_\)', parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_contactsVacancy_step, projectId, post, requirements, description)
+            return
+
+        markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        markup.add('🔴 Повторить ввод', '🟢 Все верно')
+
+        projectName = getProjectNameById(projectId)
+
+        msg = bot.send_message(message.chat.id, f'''Проверьте правильность заполнения данных:
+                               
+Вакансия в стартап *«{filter(projectName)}»*\:
+
+_Наименование должности:_ *{filter(post)}*
+
+_Требования:_ *{filter(requirements)}*
+
+_Описание:_ *{filter(description)}* 
+
+_Контакты:_ *{filter(contacts)}*''', parse_mode="MarkdownV2", reply_markup=markup)
+        bot.register_next_step_handler(msg, process_isRepeatFillingVacancy_step, projectId, post, requirements, description, contacts) 
+    except Exception as e:
+        print(e)
+        exitStepHandler(message, "error")
+
+def process_isRepeatFillingVacancy_step(message, projectId, post, requirements, description, contacts):
+    try:
+        if message.text == "🔴 Повторить ввод":
+            addNewVacancy(message.chat.id, projectId)
+        elif message.text == "🟢 Все верно":
+
+            cursor.execute(f'''INSERT INTO vacancies (post, requirements, job_description, contacts, projectid, isActive, newVacancy) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id''', 
+                           (post, requirements, description, contacts, projectId, True, True))
+            newVacancyId = cursor.fetchone()[0]
+            connection.commit()
+            
+            cursor.execute("SELECT id FROM users WHERE status && '{PROJECT_MANAGER}';")
+            projectManagerId = cursor.fetchone()[0]
+
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            getVacanciesExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel всем вакансиям', callback_data=f'get_vacancies_excel')
+            markup.add(getVacanciesExcelBtn)
+
+            bot.send_message(projectManagerId, f"Новая вакансия в проекте *«{filter(getProjectNameById(projectId))}»*", parse_mode="Markdown", reply_markup=markup)
+
+            exitStepHandler(message, "ok")
+        else:   
+            msg = bot.send_message(chat_id=message.chat.id, text="Проверьте данные и сделайте выбор", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_isRepeatFillingVacancy_step, projectId, post, requirements, description, contacts)
+
+    except Exception as ex:
+        print("Error: ", ex)
+        exitStepHandler(message, "error")
+
 
 # -------------------------------------------------- Join to project group -----------------------
 
@@ -884,6 +1003,16 @@ def createNewEvent(chatId):
     msg = bot.send_message(chat_id=chatId, text=f"Введите дату проведения мероприятия:\n(_День.Месяц.Год Час:Мин_)", parse_mode="Markdown", reply_markup=keyboard)
     bot.register_next_step_handler(msg, process_meetingDate_step)
 
+def addNewVacancy(chatId, projectId):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    goHomeBtn = types.KeyboardButton(text="↩ Выйти")
+    keyboard.add(goHomeBtn)
+
+    projectName = getProjectNameById(projectId)
+
+    msg = bot.send_message(chat_id=chatId, text=f"Введите наименование должности для проекта *{filter(projectName)}*\:\n\(_Стажёр\-маркетолог_\)", parse_mode="MarkdownV2", reply_markup=keyboard)
+    bot.register_next_step_handler(msg, process_nameOfPostVacancy_step, projectId)
+
 def fillPassportInfo(chatId, eventId):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     goHomeBtn = types.KeyboardButton(text="↩ Выйти")
@@ -893,6 +1022,10 @@ def fillPassportInfo(chatId, eventId):
     bot.register_next_step_handler(msg, process_fillPassportInfo_step, eventId)
 
 # -------------------------------------------------- Requests -----------------------
+
+def getProjectNameById(projectId):
+    cursor.execute(f'''SELECT name FROM projects WHERE id={projectId}''')
+    return cursor.fetchone()[0]
 
 def projectInfo(message, projectId):
     try:
@@ -983,15 +1116,36 @@ def userInfo(message, userId):
         print(e)
         exitStepHandler(message, "error")
 
+def getCountOfAllProjects():
+    cursor.execute(f'''SELECT COUNT(*) FROM projects;''')
+    return cursor.fetchone()[0]
+
+def getCountOfProjectsForAuthor(userId):
+    cursor.execute(f'''SELECT COUNT(*) FROM projects 
+                        INNER JOIN users_projects ON projects.id = users_projects.projectid
+                        WHERE users_projects.userid = '{userId}' and users_projects.role = 'AUTHOR';''')
+    return cursor.fetchone()[0]
+
 def getProjects(page):
     buttons_per_page = 8
     cursor.execute(f'''SELECT name, id FROM projects
                         ORDER BY name
                         LIMIT {buttons_per_page} OFFSET {page-1} * {buttons_per_page};''')
     items = cursor.fetchall()
-    cursor.execute(f'''SELECT COUNT(*) FROM projects;''')
-    countOfProjects = cursor.fetchone()[0]
-    return items, countOfProjects
+
+    return items
+
+def getProjectsForVacancy(page, userId):
+    buttons_per_page = 8
+
+    cursor.execute(f'''SELECT projects.name, projects.id FROM projects
+                        INNER JOIN users_projects ON projects.id = users_projects.projectid
+                        WHERE users_projects.userid = '{userId}' and users_projects.role = 'AUTHOR'
+                        ORDER BY projects.name
+                        LIMIT {buttons_per_page} OFFSET {page-1} * {buttons_per_page};''')    
+    items = cursor.fetchall()
+
+    return items
 
 def getUserById(userId):
     cursor.execute(f'''SELECT * FROM users 
@@ -1012,7 +1166,6 @@ def getProjectById(projectId):
     return project
 
 def getUserIdByUsernameAndFIO(userInfoMsg, dataFormat):
-    
     match dataFormat:
         case "userName":
             cursor.execute(f'''SELECT EXISTS(SELECT 1 FROM users
@@ -1057,45 +1210,72 @@ def getProjectIdByProjectname(name):
     projectId = cursor.fetchone()[0]
     return projectId 
 
+def getEventNameAndMeetingDateById(eventId):
+    cursor.execute(f"SELECT name, meetingdate FROM events WHERE id='{eventId}'")
+    NameAndMeetingDate = cursor.fetchone()
+
+    return NameAndMeetingDate
+
+def pollIsActive(poll_id):
+    cursor.execute(f"SELECT EXISTS (SELECT id FROM events WHERE id='{poll_id}' and isactive=true);")
+    isActive = cursor.fetchone()[0]
+
+    return isActive
+
 
 # -------------------------------------------------- Keyboards and markup -----------------------
 
-def create_inline_keyboard(items, page):
-    countOfProjects = getProjects(1)[1]
+def create_inline_keyboard(items, page, forVacancy, userId):
+    try:
 
-    buttons_per_page = 8  
-    start_idx = (page - 1) * buttons_per_page
-    
-    leftBtn = countOfProjects - start_idx
-    end_idx = start_idx + leftBtn if leftBtn < buttons_per_page else start_idx + buttons_per_page
+        callbackProject = "project_"
+        callbackPrev = "prev_"
+        callbackNext = "next_" 
+        
+        countOfProjects = getCountOfAllProjects()
 
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
+        if forVacancy:
+            callbackProject = "projectVac_"
+            callbackPrev = "prevVac_"
+            callbackNext = "nextVac_"
+            countOfProjects = getCountOfProjectsForAuthor(userId)
 
-    for i in range(0, len(items), 2):
-        button1 = types.InlineKeyboardButton(items[i][0], callback_data=f'project_{items[i][1]}')
-        if i + 1 == len(items):
-            keyboard.add(button1)
-            break
-        button2 = types.InlineKeyboardButton(items[i+1][0], callback_data=f'project_{items[i+1][1]}')
-        keyboard.row(button1, button2)
+        buttons_per_page = 8  
+        start_idx = (page - 1) * buttons_per_page
+        
+        leftBtn = countOfProjects - start_idx
+        end_idx = start_idx + leftBtn if leftBtn < buttons_per_page else start_idx + buttons_per_page
 
-    if page > 1 and end_idx < countOfProjects:
-        prev_button = types.InlineKeyboardButton('⬅', callback_data=f'prev_{page}')
-        next_button = types.InlineKeyboardButton('➡', callback_data=f'next_{page}')
-        keyboard.row(prev_button, next_button)
-    elif page == 1 and leftBtn <= buttons_per_page:
-        announceProject_button = types.InlineKeyboardButton('✉ Заявить о новом проекте', callback_data=f'announce_project')
-        keyboard.add(announceProject_button)
-    elif end_idx < countOfProjects:
-        next_button = types.InlineKeyboardButton('➡', callback_data=f'next_{page}')
-        keyboard.add(next_button)
-    elif page > 1:
-        announceProject_button = types.InlineKeyboardButton('✉ Заявить о новом проекте', callback_data=f'announce_project')
-        prev_button = types.InlineKeyboardButton('⬅', callback_data=f'prev_{page}')
-        keyboard.add(announceProject_button)
-        keyboard.add(prev_button)
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
 
-    return keyboard
+        for i in range(0, len(items), 2):
+            button1 = types.InlineKeyboardButton(items[i][0], callback_data=f'{callbackProject}{items[i][1]}')
+            if i + 1 == len(items):
+                keyboard.add(button1)
+                break
+            button2 = types.InlineKeyboardButton(items[i+1][0], callback_data=f'{callbackProject}{items[i+1][1]}')
+            keyboard.row(button1, button2)
+
+        if page > 1 and end_idx < countOfProjects:
+            prev_button = types.InlineKeyboardButton('⬅', callback_data=f'{callbackPrev}{page}')
+            next_button = types.InlineKeyboardButton('➡', callback_data=f'{callbackNext}{page}')
+            keyboard.row(prev_button, next_button)
+        elif page == 1 and leftBtn <= buttons_per_page and not forVacancy:
+            announceProject_button = types.InlineKeyboardButton('✉ Заявить о новом проекте', callback_data=f'announce_project')
+            keyboard.add(announceProject_button)
+        elif end_idx < countOfProjects:
+            next_button = types.InlineKeyboardButton('➡', callback_data=f'{callbackNext}{page}')
+            keyboard.add(next_button)
+        elif page > 1:
+            if not forVacancy:
+                announceProject_button = types.InlineKeyboardButton('✉ Заявить о новом проекте', callback_data=f'announce_project')
+                keyboard.add(announceProject_button)
+            prev_button = types.InlineKeyboardButton('⬅', callback_data=f'{callbackPrev}{page}')
+            keyboard.add(prev_button)
+
+        return keyboard
+    except Exception as e:
+        print("Error in generate inline keyboard (projects):" + e)
 
 def genKeyboard(userId):
     user = getUserById(userId)
@@ -1106,19 +1286,21 @@ def genKeyboard(userId):
         editInfoBtnText = "📝 Заполнить информацию о себе"
         if user['fieldofactivity'] != None and str(user['fieldofactivity']).strip() != "":
             editInfoBtnText = "📝 Редактировать информацию о себе"
-
+        
         updateProfileBtn = types.KeyboardButton(text=editInfoBtnText)
         updateProjectGroupBtn = types.KeyboardButton(text="🗂 Добавить информацию о проекте")
-        keyboard.add(updateProfileBtn, updateProjectGroupBtn)
+        addVacancyBtn = types.KeyboardButton(text="📃 Добавить вакансию для своего проекта")
+
+        keyboard.add(updateProfileBtn, updateProjectGroupBtn, addVacancyBtn)
     if user['status'].find("ADMIN") != -1:
         adminPanelBtn = types.KeyboardButton(text="🛠️ Панель администратора")
         keyboard.add(adminPanelBtn)
     if user['status'].find("EVENT_MANAGER") != -1:
         newEventBtn = types.KeyboardButton(text="🎟️ Новое мероприятие")
         keyboard.add(newEventBtn)
-    if user['status'].find("USER") != -1:
-        updateFullNameBtn = types.KeyboardButton(text="📃 Таблица вакансий")
-        keyboard.add(updateFullNameBtn)
+    # if user['status'].find("USER") != -1:
+    #     updateFullNameBtn = types.KeyboardButton(text="📃 Таблица вакансий")
+    #     keyboard.add(updateFullNameBtn)
     return keyboard
 
 
@@ -1127,7 +1309,7 @@ def genKeyboard(userId):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prev_') or call.data.startswith('next_'))
 def handle_navigation(call):
     try:
-        countOfProjects = getProjects(1)[1]
+        countOfProjects = getCountOfAllProjects()
         action, page = call.data.split('_')
 
         if action == 'prev':
@@ -1135,9 +1317,9 @@ def handle_navigation(call):
         elif action == 'next':
             current_page = min((countOfProjects - 1) // 8 + 1, int(page) + 1)
 
-        projects = getProjects(current_page)[0]
+        projects = getProjects(current_page)
 
-        keyboard = create_inline_keyboard(projects, current_page)
+        keyboard = create_inline_keyboard(projects, current_page, False, "")
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
     except Exception as e:
         print("Error in handle_navigation project keyboard: " + e)
@@ -1216,6 +1398,35 @@ def handle_project_selection(call):
             print(e)
             exitStepHandler(call.message, "error")
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith('prevVac_') or call.data.startswith('nextVac_'))
+def handle_navigation_vacancy(call):
+    try:
+        countOfProjects = getCountOfProjectsForAuthor(call.from_user.id)
+        action, page = call.data.split('_')
+
+        if action == 'prevVac':
+            current_page = max(1, int(page) - 1)
+        elif action == 'nextVac':
+            current_page = min((countOfProjects - 1) // 8 + 1, int(page) + 1)
+
+        projects = getProjectsForVacancy(current_page, call.from_user.id)
+
+        keyboard = create_inline_keyboard(projects, current_page, True, call.from_user.id)
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+    except Exception as e:
+        print("Error in handle_navigation_vacancy project keyboard: " + e)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('projectVac_'))
+def handle_project_selection_vacancy(call):
+    try:
+        bot.clear_step_handler_by_chat_id(chat_id=call.message.chat.id)
+        idProject = call.data[11:]
+       
+        addNewVacancy(call.message.chat.id, idProject)
+    except Exception as e:
+            print(e)
+            exitStepHandler(call.message, "error")
+
 @bot.callback_query_handler(func=lambda call: call.data == 'announce_project')
 def handle_announceProject(call):
     try:
@@ -1253,12 +1464,12 @@ def handle_getUsersExcel(call):
     try:
         query_string = '''SELECT id, username, lastname, firstname, patronymic, 
                                 fieldofactivity, aboutme, educationalinstitution, faculty, course, direction, 
-                                speciality, "group", phonenum, email, status FROM users ORDER BY lastname'''
+                                speciality, "group", seriespassport, numberpassport, phonenum, email, status FROM users ORDER BY lastname'''
         filepath = "usersList.xlsx"
 
         export_to_excel(query_string,("Имя пользователя", "Фамилия", "Имя", "Отчество", 
                                         "Род деятельности", "О себе", "Образовательное учреждение", "Факультет", "Курс", "Направление", 
-                                        "Специальность", "Группа", "Номер тел.", "Email", "Роли", "Участник проектов"), filepath)
+                                        "Специальность", "Группа", "Серия паспорта", "Номер паспорта", "Номер тел.", "Email", "Роли", "Участник проектов"), filepath)
 
         with open('usersList.xlsx', 'rb') as tmp:
             bot.send_document(call.from_user.id, tmp)
@@ -1280,79 +1491,25 @@ def handle_getProjectsExcel(call):
         print(e)
         exitStepHandler(call.message, "error")
 
-def export_to_excel(query_string, headings, filepath):
-    cursor.execute(query_string)
-    data = cursor.fetchall()
+@bot.callback_query_handler(func=lambda call: call.data == 'get_vacancies_excel')
+def handle_getVacanciesExcel(call):
+    try:
+        query_string = '''SELECT id, newvacancy, isactive, post, requirements, job_description, contacts, projectid 
+                            FROM vacancies 
+                            ORDER BY newvacancy DESC'''
+        filepath = "vacanciesList.xlsx"
 
-    wb = openpyxl.Workbook()
-    sheet = wb.active
+        export_to_excel(query_string,("Статус", "Актуальность", "Должность", "Требования", "Описание", "Контакты", "Проект"), filepath)
 
-    header = NamedStyle(name="header")
-    header.font = Font(bold=True)
-    header.border = Border(bottom=Side(border_style="thin"))
-    header.alignment = Alignment(horizontal="center", vertical="center")
+        with open('vacanciesList.xlsx', 'rb') as tmp:
+            bot.send_document(call.from_user.id, tmp, caption="Список всех подаваемых вакансий\n(Статус: «Новое» - вакансия еще не просматривалась и отсутствовала при прошлой выгрузке таблицы)")
+    
+        cursor.execute("UPDATE vacancies SET newvacancy = false;")
+        connection.commit()
 
-    for colno, heading in enumerate(headings, start = 1):
-        sheet.cell(row = 1, column = colno).value = heading
-
-    header_row = sheet[1]
-    for cell in header_row:
-        cell.style = header
-
-    for rowno, row in enumerate(data, start = 2):
-        itemId = row[0]
-        for colno, cell_value in enumerate(row[1:], start = 1):
-            if filepath.startswith('usersList'):
-                if colno == 15: # projectMember - 1 column
-                    cursor.execute(f'''SELECT name FROM users_projects
-                            INNER JOIN projects ON users_projects.projectid = projects.id
-                            WHERE userid = '{itemId}';''')
-                    projects = cursor.fetchall()
-                    projectNames = ""
-                    for project in projects:
-                        projectNames += project[0] + ", "
-                    
-                    sheet.cell(row = rowno, column = colno).value = cell_value # status
-                    sheet.cell(row = rowno, column = colno+1).value = projectNames[:-2] # projectsMember
-                    continue
-            if filepath.startswith('usersList'):
-                if colno == 15: # projectMember - 1 column
-                    cursor.execute(f'''SELECT name FROM users_projects
-                            INNER JOIN projects ON users_projects.projectid = projects.id
-                            WHERE userid = '{itemId}';''')
-                    projects = cursor.fetchall()
-                    projectNames = ""
-                    for project in projects:
-                        projectNames += project[0] + ", "
-                    
-                    sheet.cell(row = rowno, column = colno).value = cell_value # status
-                    sheet.cell(row = rowno, column = colno+1).value = projectNames[:-2] # projectsMember
-                    continue
-            elif filepath.startswith('projectsList'):
-                if colno == 3: # projectMember - 1 column
-                    cursor.execute(f'''SELECT concat(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') as FIO FROM users_projects
-                                        INNER JOIN users ON users_projects.userid = users.id
-                                        WHERE projectid = {itemId} and role = 'AUTHOR';''')
-                    fioAuthor = cursor.fetchone()[0]
-
-                    cursor.execute(f'''SELECT concat(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') FROM users_projects
-                            INNER JOIN users ON users_projects.userid = users.id
-                            WHERE projectid = {itemId} and role = 'PARTNER';''')
-                    items = cursor.fetchall()
-                    partners = ""
-
-                    for partner in items:
-                        partners += f'{partner[0] if partner[0] != None else ""};\n'
-                    
-                    if partners.strip() != "":
-                        partners = f"{partners}"[:-2] + "."
-
-                    sheet.cell(row = rowno, column = colno).value = cell_value
-                    sheet.cell(row = rowno, column = colno+1).value = fioAuthor
-                    sheet.cell(row = rowno, column = colno+2).value = partners
-                    continue
-            sheet.cell(row = rowno, column = colno).value = cell_value
-    wb.save(filepath)
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rejectRequest_') or call.data.startswith('acceptRequest_'))
 def handle_acceptRejectRequest(call):
@@ -1393,6 +1550,9 @@ def handle_setNeedMemo(call):
         userId = str(call.data).split('_')[2]
         eventId = str(call.data).split('_')[3]
 
+        if not pollIsActive(eventId): 
+            return
+
         cursor.execute(f'''UPDATE events_users SET needmemo = {True} 
                        WHERE eventid = '{eventId}' and userid = '{userId}';''')
         connection.commit()
@@ -1407,6 +1567,9 @@ def handle_setNeedPass(call):
     try:
         userId = str(call.data).split('_')[2]
         eventId = str(call.data).split('_')[3]
+
+        if not pollIsActive(eventId): 
+            return
 
         cursor.execute(f'''SELECT (seriesPassport IS NOT NULL AND numberPassport IS NOT NULL) AS indicatedData 
                             FROM users WHERE id = '{userId}';''')
@@ -1448,6 +1611,88 @@ def handle_deletePartnerFrom(call):
     #     print(e)
     #     exitStepHandler(call.message, "error")
 
+
+def export_to_excel(query_string, headings, filepath):
+    try:
+        cursor.execute(query_string)
+        data = cursor.fetchall()
+
+        wb = openpyxl.Workbook()
+        sheet = wb.active
+
+        header = NamedStyle(name="header")
+        header.font = Font(bold=True)
+        header.border = Border(bottom=Side(border_style="thin"))
+        header.alignment = Alignment(horizontal="center", vertical="center")
+
+        for colno, heading in enumerate(headings, start = 1):
+            sheet.cell(row = 1, column = colno).value = heading
+
+        header_row = sheet[1]
+        for cell in header_row:
+            cell.style = header
+
+        for rowno, row in enumerate(data, start = 2):
+            itemId = row[0]
+            for colno, cell_value in enumerate(row[1:], start = 1):
+                if filepath.startswith('usersList') and colno == 17:
+                    cursor.execute(f'''SELECT name FROM users_projects
+                            INNER JOIN projects ON users_projects.projectid = projects.id
+                            WHERE userid = '{itemId}';''')
+                    projects = cursor.fetchall()
+                    projectNames = ""
+                    for project in projects:
+                        projectNames += project[0] + ", "
+                    
+                    sheet.cell(row = rowno, column = colno).value = cell_value # status
+                    sheet.cell(row = rowno, column = colno+1).value = projectNames[:-2] # projectsMember
+                    continue
+                elif filepath.startswith('projectsList') and colno == 3:
+                    cursor.execute(f'''SELECT concat(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') as FIO FROM users_projects
+                                        INNER JOIN users ON users_projects.userid = users.id
+                                        WHERE projectid = {itemId} and role = 'AUTHOR';''')
+                    fioAuthor = cursor.fetchone()[0]
+
+                    cursor.execute(f'''SELECT concat(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') FROM users_projects
+                            INNER JOIN users ON users_projects.userid = users.id
+                            WHERE projectid = {itemId} and role = 'PARTNER';''')
+                    items = cursor.fetchall()
+                    partners = ""
+
+                    for partner in items:
+                        partners += f'{partner[0] if partner[0] != None else ""};\n'
+                    
+                    if partners.strip() != "":
+                        partners = f"{partners}"[:-2] + "."
+
+                    sheet.cell(row = rowno, column = colno).value = cell_value
+                    sheet.cell(row = rowno, column = colno+1).value = fioAuthor
+                    sheet.cell(row = rowno, column = colno+2).value = partners
+                    continue
+                elif filepath.startswith('vacanciesList'):
+                    if colno == 1:
+                        if cell_value:
+                            value = "Новое"
+                        else:
+                            value = "Просмотрено"
+                    elif colno == 2:
+                        if cell_value:
+                            value = "В поиске"
+                        else:
+                            value = "Не актуально"
+                    elif colno == 7:
+                        value = getProjectNameById(cell_value)
+                    else: 
+                        sheet.cell(row = rowno, column = colno).value = cell_value
+                        continue
+                    sheet.cell(row = rowno, column = colno).value = value
+                    continue
+
+
+                sheet.cell(row = rowno, column = colno).value = cell_value
+        wb.save(filepath)
+    except Exception as e:
+        print("Error in export Excel" + e)
 
 # -------------------------------------------------- Commands -----------------------
 
@@ -1553,6 +1798,7 @@ def getProjectInfo(message):
         print(e)
         exitStepHandler(message, "error")
 
+
 # -------------------------------------------------- Message handlers -----------------------
 
 @bot.message_handler(func=lambda message: message.text == "📝 Заполнить информацию о себе" or message.text == "🔴 Повторить ввод" or message.text == "📝 Редактировать информацию о себе")
@@ -1571,9 +1817,8 @@ def selectionProjectGroup(message):
         return
 
     page = 1
-    inlineKeyboard = create_inline_keyboard(getProjects(page)[0], page)
-    msg = bot.send_message(chat_id=message.chat.id, text=f"Выберите проект, в команде которого Вы состоите или добавьте свой", parse_mode="Markdown", reply_markup=inlineKeyboard)
-    # bot.register_next_step_handler(message=msg, callback=process_updateProjectGroup_step)
+    inlineKeyboard = create_inline_keyboard(getProjects(page), page, False, "")
+    bot.send_message(chat_id=message.chat.id, text=f"Выберите проект, в команде которого Вы состоите или добавьте свой", parse_mode="Markdown", reply_markup=inlineKeyboard)
 
 @bot.message_handler(func=lambda message: message.text == "🟢 Все верно" or message.text == "↩ Выйти")
 def goMainMenu(message):
@@ -1604,23 +1849,36 @@ def getAdminPanel(message):
 
 @bot.message_handler(func=lambda message: message.text == "🎟️ Новое мероприятие")
 def newEvent(message):
-
     user = getUserById(message.from_user.id)
+
     if (user['status'].find("EVENT_MANAGER") == -1):
         return
 
     createNewEvent(message.chat.id)
 
+@bot.message_handler(func=lambda message: message.text == "📃 Добавить вакансию для своего проекта")
+def newVacancy(message):
+    user = getUserById(message.from_user.id)
+
+    if user['status'].find("RESIDENT") == -1:
+        return
+    if getCountOfProjectsForAuthor(message.from_user.id) < 1:
+        bot.send_message(chat_id=message.chat.id, text=f"Пока что вы не числитетесь заявителем ни в одном проекте, попробуйте добавить информацию о проекте.", parse_mode="Markdown", reply_markup=inlineKeyboard)
+        return
+
+    page = 1
+    inlineKeyboard = create_inline_keyboard(getProjectsForVacancy(page, message.from_user.id), page, True, message.from_user.id)
+    bot.send_message(chat_id=message.chat.id, text=f"Выберите проект, для которого надо добавить новую вакансию:", parse_mode="Markdown", reply_markup=inlineKeyboard)
+
 @bot.message_handler(content_types=["new_chat_members"])
 def handler_new_member(message):
-
-    user_id = message.new_chat_members[0].id
-    username = message.new_chat_members[0].username
-    firstName = message.new_chat_members[0].first_name
-    lastName = message.new_chat_members[0].last_name
-
     try:
-        if(str(message.chat.id) == '-4066956508'):
+        user_id = message.new_chat_members[0].id
+        username = message.new_chat_members[0].username
+        firstName = message.new_chat_members[0].first_name
+        lastName = message.new_chat_members[0].last_name
+
+        if(str(message.chat.id) == config.RESIDENT_GROUP_ID):
             cursor.execute('''INSERT INTO users (id, username, firstName, lastName, status) VALUES (%s, %s, %s, %s, '{RESIDENT}') 
                             On CONFLICT(id) DO UPDATE
                             SET (username, firstName, lastName, status) = (EXCLUDED.username, EXCLUDED.firstName, EXCLUDED.lastName, EXCLUDED.status);''', 
@@ -1654,43 +1912,42 @@ def send_message_to_group(message):
 
 @bot.poll_answer_handler()
 def handle_poll_answer(pollAnswer):
-    isGoingToCome = False
-    needMemo = False
-    needPass = False
+    try:
+        isGoingToCome = False
+        needMemo = False
+        needPass = False
 
-    match str(pollAnswer.option_ids):
-        case '[0]':
-            isGoingToCome = True
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            needMemoBtn = types.InlineKeyboardButton('📄 Запросить служебную записку', callback_data=f'need_memo_{pollAnswer.user.id}_{pollAnswer.poll_id}')
-            needPassBtn = types.InlineKeyboardButton('🎫 Нужен пропуск на территорию', callback_data=f'need_pass_{pollAnswer.user.id}_{pollAnswer.poll_id}')
+        if not pollIsActive(pollAnswer.poll_id): 
+            return
 
-            user = getUserById(pollAnswer.user.id)
-            if user['educationalinstitution'] == 'РЭУ им. Г.В. Плеханова':
-                markup.add(needMemoBtn)
-            else:
-                markup.add(needPassBtn)
+        match str(pollAnswer.option_ids):
+            case '[0]':
+                isGoingToCome = True
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                needMemoBtn = types.InlineKeyboardButton('📄 Запросить служебную записку', callback_data=f'need_memo_{pollAnswer.user.id}_{pollAnswer.poll_id}')
+                needPassBtn = types.InlineKeyboardButton('🎫 Нужен пропуск на территорию', callback_data=f'need_pass_{pollAnswer.user.id}_{pollAnswer.poll_id}')
 
-            NameAndMeetingDate = getEventNameAndMeetingDateById(pollAnswer.poll_id)
-            bot.send_message(chat_id=pollAnswer.user.id, text=f"Не забудь про мероприятие *«{filter(NameAndMeetingDate[0])}»* \- _{filter(str(NameAndMeetingDate[1].strftime('%d.%m.%Y %H:%M')))}_\.", parse_mode="MarkdownV2", reply_markup=markup)
+                user = getUserById(pollAnswer.user.id)
+                if user['educationalinstitution'] == 'РЭУ им. Г.В. Плеханова':
+                    markup.add(needMemoBtn)
+                else:
+                    markup.add(needPassBtn)
 
-        case '[1]':
-            isGoingToCome = False
-        case '[]':
-            isGoingToCome = False
+                NameAndMeetingDate = getEventNameAndMeetingDateById(pollAnswer.poll_id)
+                bot.send_message(chat_id=pollAnswer.user.id, text=f"Не забудь про мероприятие *«{filter(NameAndMeetingDate[0])}»* \- _{filter(str(NameAndMeetingDate[1].strftime('%d.%m.%Y %H:%M')))}_\.", parse_mode="MarkdownV2", reply_markup=markup)
 
-    cursor.execute(f'''INSERT INTO events_users (eventid, userid, isgoingtocome, needmemo, needpass) VALUES (%s, %s, %s,%s, %s) 
-                        ON CONFLICT (eventid, userid)
-                        DO UPDATE SET (isgoingtocome, needmemo, needpass) = (EXCLUDED.isgoingtocome, EXCLUDED.needmemo, EXCLUDED.needpass);''', 
-                    (pollAnswer.poll_id, pollAnswer.user.id, isGoingToCome, needMemo, needPass))
-    connection.commit()
+            case '[1]':
+                isGoingToCome = False
+            case '[]':
+                isGoingToCome = False
 
-
-def getEventNameAndMeetingDateById(eventId):
-    cursor.execute(f"SELECT name, meetingdate FROM events WHERE id='{eventId}'")
-    NameAndMeetingDate = cursor.fetchone()
-
-    return NameAndMeetingDate
+        cursor.execute(f'''INSERT INTO events_users (eventid, userid, isgoingtocome, needmemo, needpass) VALUES (%s, %s, %s,%s, %s) 
+                            ON CONFLICT (eventid, userid)
+                            DO UPDATE SET (isgoingtocome, needmemo, needpass) = (EXCLUDED.isgoingtocome, EXCLUDED.needmemo, EXCLUDED.needpass);''', 
+                        (pollAnswer.poll_id, pollAnswer.user.id, isGoingToCome, needMemo, needPass))
+        connection.commit()
+    except Exception as e:
+        print("Error in poll answer handler: " + e)
 
 def schedule_checker():
     while True:
@@ -1741,17 +1998,38 @@ def eventDeadlineNewsletter(events):
                 NameAndMeetingDate = getEventNameAndMeetingDateById(id[0])
 
                 bot.send_message(docManagerId, f'''На мероприятие *«{filter(NameAndMeetingDate[0])}»* \- _{filter(str(NameAndMeetingDate[1].strftime('%d.%m.%Y %H:%M')))}_:
+
 *Зарегистрировалось:* {countOfPlanningToCome} чел\.
 *Резиденты из РЭУ:* {countOfFromREA} чел\.
 *Резиденты из других ВУЗов:* {countOfFromAnother} чел\.
 *Запросили служебную записку:* {countOfneedMemo} чел\.
 *Запросили пропуск на территорию:* {countOfneedPass} чел\.''', parse_mode="MarkdownV2")
                 
+                if countOfneedMemo > 0:
+                    query_string = f'''SELECT users.id, CONCAT('@', username) AS username, lastname, firstname, patronymic, faculty, course, direction, speciality, "group" 
+                                        FROM events_users 
+                                        INNER JOIN users ON events_users.userid=users.id
+                                        WHERE eventid='{id[0]}' AND isgoingtocome = true AND needmemo = true;'''
+                    filepath = "needMemoList.xlsx"
+
+                    export_to_excel(query_string,("Имя пользователя tg", "Фамилия", "Имя", "Отчество", "Факультет", "Курс", "Направление", "Специальность", "Группа"), filepath)
+                    with open('needMemoList.xlsx', 'rb') as tmp:
+                        bot.send_document(chat_id=docManagerId, document=tmp, caption="Список запросивших служебное освобождение")
+
+                if countOfneedPass > 0:
+                    query_string = f'''SELECT users.id, CONCAT('@', username) AS username, lastname, firstname, patronymic, seriespassport, numberpassport
+                                        FROM events_users 
+                                        INNER JOIN users ON events_users.userid=users.id
+                                        WHERE eventid='{id[0]}' AND isgoingtocome = true AND needpass = true;'''
+                    filepath = "needPassList.xlsx"
+
+                    export_to_excel(query_string,("Имя пользователя tg", "Фамилия", "Имя", "Отчество", "Серия паспорта", "Номер паспорта"), filepath)
+                    with open('needPassList.xlsx', 'rb') as tmp:
+                        bot.send_document(chat_id=docManagerId, document=tmp, caption="Список запросивших пропуск")
+
                 eventDeadlineNewsletterForResidents(id[0])
     except Exception as e:
-        print("Error in Newsletter For DocManager: " + e)
-
-# for Pass - 
+        print("Error in Newsletter For DocManager: ", e)
 
 def eventDeadlineNewsletterForResidents(eventId):
     try:
@@ -1764,6 +2042,15 @@ def eventDeadlineNewsletterForResidents(eventId):
     except Exception as e:
         print("Error in Newsletter For Residents: " + e)
 
+def newsletterForProjectManager():
+    cursor.execute("SELECT id FROM users WHERE status && '{PROJECT_MANAGER}';")
+    projectManagerId = cursor.fetchone()[0]
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    getVacanciesExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel всем вакансиям', callback_data=f'get_vacancies_excel')
+    markup.add(getVacanciesExcelBtn)
+
+    bot.send_message(projectManagerId, "Проверьте таблицу вакансий на наличие новых записей.", reply_markup=markup)
 
 if __name__ == '__main__':
     for fiveMin in range(0, 60, 5):
@@ -1773,6 +2060,10 @@ if __name__ == '__main__':
         else:
             everyFive = ":" + str(fiveMin)
         schedule.every().hour.at(everyFive).do(isTimeToNewsletterForDocManager)
+
+    today = datetime.date.today()
+    if calendar.monthrange(today.year, today.month)[1] == today.day:
+        newsletterForProjectManager()
 
     Thread(target=schedule_checker).start()
     bot.infinity_polling()
