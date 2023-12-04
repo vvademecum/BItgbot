@@ -703,7 +703,7 @@ _*Дедлайн по голосованию:* {filter(deadline)}_''', parse_mod
         print("Error: ", ex)
         exitStepHandler(message, "error")
 
-def process_getUserNumForSelect_step(message, projectId, partners):
+def process_getUserNumForDeleteFromProject_step(message, projectId, partners):
     try:
         if message.text == "↩ Выйти":
             exitStepHandler(message, "ok")
@@ -713,7 +713,7 @@ def process_getUserNumForSelect_step(message, projectId, partners):
 
         if partners.get(str(numOfUser)) is None or not numOfUser.isdigit():
             msg = bot.reply_to(message, 'Неверный формат, повторите ввод номера\n(Пример: 1)', parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_getUserNumForSelect_step, projectId, partners)
+            bot.register_next_step_handler(msg, process_getUserNumForDeleteFromProject_step, projectId, partners)
             return
     
         userFioUsernameString = str(partners[str(numOfUser)])
@@ -914,6 +914,14 @@ def process_requestToJoin_step(message, projectId, authorId):
 
 # -------------------------------------------------- Auxiliary -----------------------
 
+def filter(text):
+    text = text.replace('_', '\_').replace('*', '\*').replace('[', '\[').replace(']', '\]').replace('(', '\(').replace(')', '\)').replace('~', '\~').replace('`', '\`').replace('>', '\>').replace('#', '\#').replace('+', '\+').replace('-', '\-').replace('=', '\=').replace('|', '\|').replace('{', '\{').replace('}', '\}').replace('.', '\.').replace('!', '\!')
+    return text
+
+def extract_arg(arg):
+    return arg.split()[1:]
+
+
 def exitStepHandler(message, status):
     text = ""
     match status:
@@ -927,13 +935,6 @@ def exitStepHandler(message, status):
     bot.send_message(chat_id=message.chat.id, text=text, parse_mode="Markdown", reply_markup=genKeyboard(message.from_user.id))
     bot.clear_step_handler_by_chat_id(chat_id=message.chat.id)
     return
-
-def filter(text):
-    text = text.replace('_', '\_').replace('*', '\*').replace('[', '\[').replace(']', '\]').replace('(', '\(').replace(')', '\)').replace('~', '\~').replace('`', '\`').replace('>', '\>').replace('#', '\#').replace('+', '\+').replace('-', '\-').replace('=', '\=').replace('|', '\|').replace('{', '\{').replace('}', '\}').replace('.', '\.').replace('!', '\!')
-    return text
-
-def extract_arg(arg):
-    return arg.split()[1:]
 
 def updateFullname(chatId, userId):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
@@ -975,7 +976,7 @@ def getProjectnameForSelect(chatId):
     msg = bot.send_message(chatId, "Введите наименование проекта для отображения данных\n(Пример: TimeTrace)", reply_markup=keyboard)        
     bot.register_next_step_handler(message=msg, callback=process_getProjectnameForSelect_step)
 
-def getUserNumForSelect(chatId, projectId):
+def getUserNumForDeleteFromProject(chatId, projectId):
     keyboard = types.ReplyKeyboardMarkup(row_width=4, resize_keyboard=True)
 
     cursor.execute(f'''SELECT CONCAT(lastname, ' ', firstname, ' ', patronymic, ' (@', username, ')') FROM users_projects
@@ -994,7 +995,7 @@ def getUserNumForSelect(chatId, projectId):
     keyboard.add(goHomeBtn)
 
     msg = bot.send_message(chatId, f"{partnersStr}\n_Введите *номер пользователя*, чтобы исключить его из проекта_ \n\(\-\-\> *1\.* Иванов Иван Иванович \(@username\)\)", parse_mode="MarkdownV2", reply_markup=keyboard)        
-    bot.register_next_step_handler(msg, process_getUserNumForSelect_step, projectId, partners)
+    bot.register_next_step_handler(msg, process_getUserNumForDeleteFromProject_step, projectId, partners)
 
 def createNewEvent(chatId):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
@@ -1133,7 +1134,6 @@ def getProjects(page):
                         ORDER BY name
                         LIMIT {buttons_per_page} OFFSET {page-1} * {buttons_per_page};''')
     items = cursor.fetchall()
-
     return items
 
 def getProjectsForVacancy(page, userId):
@@ -1593,24 +1593,29 @@ def handle_deletePartnerFrom(call):
     try:
         projectId = str(call.data).split('_')[1]
 
-        getUserNumForSelect(call.message.chat.id, projectId)
+        getUserNumForDeleteFromProject(call.message.chat.id, projectId)
     except Exception as e:
         print(e)
         exitStepHandler(call.message, "error")
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith('set_vacansy_active'))
+def handle_setVacancyActive(call):
+    try:
+        setActive = True if str(call.data).split('_')[3] == "True" else False
+        vacancyId = str(call.data).split('_')[4]
+        authorId = str(call.data).split('_')[5]
 
-    # try:
-    #     projectId = str(call.data).split('_')[1]
-
-    #     cursor.execute(f'''UPDATE events_users SET needpass = {True} 
-    #                    WHERE eventid = '{eventId}' and userid = '{userId}';''')
-    #     connection.commit()
+        if setActive: 
+            return
         
-    #     msg = bot.send_message(call.from_user.id, "Запрос на пропуск оформлен.")
-    #     bo
-    # except Exception as e:
-    #     print(e)
-    #     exitStepHandler(call.message, "error")
+        cursor.execute(f'''UPDATE vacancies SET isactive = {False}, newvacancy = {True}
+                    WHERE id = '{vacancyId}';''')
+        connection.commit()
+
+        bot.send_message(authorId, "Вакансия снята с публикации.")
+    except Exception as e:
+        print(e)
+        exitStepHandler(call.message, "error")
 
 
 def export_to_excel(query_string, headings, filepath):
@@ -2044,24 +2049,40 @@ def eventDeadlineNewsletterForResidents(eventId):
         print("Error in Newsletter For Residents: " + e)
 
 def newsletterForProjectManager():
-    cursor.execute("SELECT id FROM users WHERE status && '{PROJECT_MANAGER}';")
-    projectManagerId = cursor.fetchone()[0]
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    getVacanciesExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel всем вакансиям', callback_data=f'get_vacancies_excel')
-    markup.add(getVacanciesExcelBtn)
+    try:
+        cursor.execute("SELECT id FROM users WHERE status && '{PROJECT_MANAGER}';")
+        projectManagerId = cursor.fetchone()[0]
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        getVacanciesExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel всем вакансиям', callback_data=f'get_vacancies_excel')
+        markup.add(getVacanciesExcelBtn)
 
-    bot.send_message(projectManagerId, "Проверьте таблицу вакансий на наличие новых записей.", reply_markup=markup)
+        bot.send_message(projectManagerId, "Проверьте таблицу вакансий на наличие новых записей.", reply_markup=markup)
+    except Exception as e:
+        print("Error in newsletter for projectManager: " + e)
 
 def newsletterForResidentVacancy():
-    cursor.execute("SELECT id FROM users WHERE status && '{PROJECT_MANAGER}';")
-    projectManagerId = cursor.fetchone()[0]
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    getVacanciesExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel всем вакансиям', callback_data=f'get_vacancies_excel')
-    markup.add(getVacanciesExcelBtn)
-
-    bot.send_message(projectManagerId, "Проверьте таблицу вакансий на наличие новых записей.", reply_markup=markup)
+    try:
+        cursor.execute('''SELECT users_projects.userid, vacancies.id, vacancies.post, projects.name FROM vacancies 
+                            INNER JOIN users_projects ON vacancies.projectid = users_projects.projectid
+                            INNER JOIN projects ON vacancies.projectid = projects.id
+                            WHERE vacancies.isactive = true and users_projects.role = 'AUTHOR'
+                            ORDER BY newvacancy DESC;''')
+        vacancies = cursor.fetchall()
+        
+        for vacancy in vacancies:
+            authorId = vacancy[0]
+            vacancyId = vacancy[1]
+            postName = vacancy[2]
+            projectName = vacancy[3]
+            
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            setVacansyActiveFalse = types.InlineKeyboardButton('❌ Снять с публикации', callback_data=f'set_vacansy_active_False_{vacancyId}_{authorId}')
+            setVacansyActiveTrue = types.InlineKeyboardButton('✅ Актуально', callback_data=f'set_vacansy_active_True_{vacancyId}_{authorId}')
+            markup.add(setVacansyActiveFalse, setVacansyActiveTrue)
+            bot.send_message(authorId, f"Обновите данные для таблицы вакансий!\nОтветьте, актуальна ли ещё вакансия на должность *«{postName}»* в проект *«{projectName}»*?", parse_mode="Markdown", reply_markup=markup)
+    except Exception as e:
+        print("Error in newsletter for projectManager: " + e)
 
 if __name__ == '__main__':
     for fiveMin in range(0, 60, 5):
@@ -2073,8 +2094,9 @@ if __name__ == '__main__':
         schedule.every().hour.at(everyFive).do(isTimeToNewsletterForDocManager)
 
     today = datetime.date.today()
-    if calendar.monthrange(today.year, today.month)[1] != today.day:
+    if calendar.monthrange(today.year, today.month)[1] == today.day:
         newsletterForProjectManager()
+        newsletterForResidentVacancy()
 
     Thread(target=schedule_checker).start()
     bot.infinity_polling()
