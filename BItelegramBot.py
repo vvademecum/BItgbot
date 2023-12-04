@@ -8,7 +8,8 @@ import json
 import time
 from threading import Thread
 import schedule
-from datetime import datetime, calendar
+import datetime
+import calendar
 import openpyxl
 from openpyxl.styles import NamedStyle, Font, Alignment, Border, Side
 
@@ -573,9 +574,9 @@ def process_meetingDate_step(message):
         
         meetingDate = message.text
         
-        now = datetime.now()
+        now = datetime.datetime.now()
         try:
-            dt = datetime.strptime(meetingDate, "%d.%m.%y %H:%M")
+            dt = datetime.datetime.strptime(meetingDate, "%d.%m.%y %H:%M")
             if dt <= now:
                 msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени мероприятия:\n(Пример: _18.11.23 17:00_)', parse_mode="Markdown")
                 bot.register_next_step_handler(msg, process_meetingDate_step)                
@@ -640,12 +641,12 @@ def process_deadlineEvent_step(message, meetingDate, nameEvent, description):
         
         deadline = message.text
 
-        now = datetime.now()
+        now = datetime.datetime.now()
         try:
-            dt = datetime.strptime(deadline, "%d.%m.%y %H:%M")
+            dt = datetime.datetime.strptime(deadline, "%d.%m.%y %H:%M")
             deadlineMin = int(dt.strftime('%M'))
 
-            if dt <= now or dt >= datetime.strptime(meetingDate, "%d.%m.%y %H:%M") or deadlineMin % 5 != 0:
+            if dt <= now or dt >= datetime.datetime.strptime(meetingDate, "%d.%m.%y %H:%M") or deadlineMin % 5 != 0:
                 msg = bot.reply_to(message, 'Неверный формат, повторите ввод даты и времени окончания голосования\n(Пример: _17.11.23 21:00_)', parse_mode="Markdown")
                 bot.register_next_step_handler(msg, process_deadlineEvent_step, meetingDate, nameEvent, description)
                 return
@@ -1956,7 +1957,7 @@ def schedule_checker():
 
 def isTimeToNewsletterForDocManager():
     try:
-        now = datetime.now() 
+        now = datetime.datetime.now() 
         current_time = now.strftime("%Y-%m-%d %H:%M")
         print(current_time)
 
@@ -2052,6 +2053,16 @@ def newsletterForProjectManager():
 
     bot.send_message(projectManagerId, "Проверьте таблицу вакансий на наличие новых записей.", reply_markup=markup)
 
+def newsletterForResidentVacancy():
+    cursor.execute("SELECT id FROM users WHERE status && '{PROJECT_MANAGER}';")
+    projectManagerId = cursor.fetchone()[0]
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    getVacanciesExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel всем вакансиям', callback_data=f'get_vacancies_excel')
+    markup.add(getVacanciesExcelBtn)
+
+    bot.send_message(projectManagerId, "Проверьте таблицу вакансий на наличие новых записей.", reply_markup=markup)
+
 if __name__ == '__main__':
     for fiveMin in range(0, 60, 5):
         everyFive = ""
@@ -2062,7 +2073,7 @@ if __name__ == '__main__':
         schedule.every().hour.at(everyFive).do(isTimeToNewsletterForDocManager)
 
     today = datetime.date.today()
-    if calendar.monthrange(today.year, today.month)[1] == today.day:
+    if calendar.monthrange(today.year, today.month)[1] != today.day:
         newsletterForProjectManager()
 
     Thread(target=schedule_checker).start()
