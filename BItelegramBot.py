@@ -14,6 +14,7 @@ from usersController import UsersController
 from auxiliary import Auxiliary
 from eventsController import EventsController
 from vacanciesController import VacanciesController
+from keyboards import Keyboards
 
 bot = telebot.TeleBot(config.BOT_TOKEN)
 
@@ -32,6 +33,7 @@ eventsController = EventsController(bot, connection)
 db = DatabaseRequests(connection)
 auxiliary = Auxiliary(bot, connection)
 vacanciesController = VacanciesController(bot, connection)
+keyboards = Keyboards(connection)
 
 print('[INFO] PostgreSQL start')
 
@@ -57,7 +59,7 @@ def process_requestToJoin_step(message, projectId, authorId):
                             parse_mode="MarkdownV2")
             
             bot.send_message(message.from_user.id, f"Ваша заявка на вступление в команду проекта *«{auxiliary.filter(getProjectById(projectId)['name'])}»* была отправлена\. Скоро заявитель её рассмотрит и мы уведомим Вас о результате\.", 
-                            reply_markup=genMainKeyboard(message.from_user.id), 
+                            reply_markup=keyboards.genMainKeyboard(message.from_user.id), 
                             parse_mode="MarkdownV2")
         else:
             msg = bot.reply_to(message, 'Вы можете *подать заявку* на присоединение к команде выбранного проекта или *отменить* действие.', parse_mode="Markdown")
@@ -147,99 +149,6 @@ def pollIsActive(poll_id):
     return isActive
 
 
-# -------------------------------------------------- Keyboards and markup -----------------------
-
-def create_inline_keyboard(items, page, forVacancy, userId):
-    try:
-        callbackProject = "project_"
-        callbackPrev = "prev_"
-        callbackNext = "next_" 
-        
-        countOfProjects = db.getCountOfAllProjects()
-
-        if forVacancy:
-            callbackProject = "projectVac_"
-            callbackPrev = "prevVac_"
-            callbackNext = "nextVac_"
-            countOfProjects = db.getCountOfProjectsForAuthor(userId)
-
-        buttons_per_page = 8  
-        start_idx = (page - 1) * buttons_per_page
-        
-        leftBtn = countOfProjects - start_idx
-        end_idx = start_idx + leftBtn if leftBtn < buttons_per_page else start_idx + buttons_per_page
-
-        keyboard = types.InlineKeyboardMarkup(row_width=2)
-
-        for i in range(0, len(items), 2):
-            button1 = types.InlineKeyboardButton(items[i][0], callback_data=f'{callbackProject}{items[i][1]}')
-            if i + 1 == len(items):
-                keyboard.add(button1)
-                break
-            button2 = types.InlineKeyboardButton(items[i+1][0], callback_data=f'{callbackProject}{items[i+1][1]}')
-            keyboard.row(button1, button2)
-
-        if page > 1 and end_idx < countOfProjects:
-            prev_button = types.InlineKeyboardButton('⬅', callback_data=f'{callbackPrev}{page}')
-            next_button = types.InlineKeyboardButton('➡', callback_data=f'{callbackNext}{page}')
-            keyboard.row(prev_button, next_button)
-        elif page == 1 and leftBtn <= buttons_per_page and not forVacancy:
-            announceProject_button = types.InlineKeyboardButton('✉ Заявить о новом проекте', callback_data=f'announce_project')
-            keyboard.add(announceProject_button)
-        elif end_idx < countOfProjects:
-            next_button = types.InlineKeyboardButton('➡', callback_data=f'{callbackNext}{page}')
-            keyboard.add(next_button)
-        elif page > 1:
-            if not forVacancy:
-                announceProject_button = types.InlineKeyboardButton('✉ Заявить о новом проекте', callback_data=f'announce_project')
-                keyboard.add(announceProject_button)
-            prev_button = types.InlineKeyboardButton('⬅', callback_data=f'{callbackPrev}{page}')
-            keyboard.add(prev_button)
-
-        return keyboard
-    except Exception as e:
-        print("Error in generate inline keyboard (projects):", e)
-
-def genMainKeyboard(userId):
-    user = db.getUserById(userId)
-
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-
-    if user['status'].find("RESIDENT") != -1:
-        editInfoBtnText = "📝 Заполнить информацию о себе"
-        if user['fieldofactivity'] != None and str(user['fieldofactivity']).strip() != "":
-            editInfoBtnText = "📝 Редактировать информацию о себе"
-        
-        updateProfileBtn = types.KeyboardButton(text=editInfoBtnText)
-        updateProjectGroupBtn = types.KeyboardButton(text="🗂 Добавить информацию о проекте")
-        addVacancyBtn = types.KeyboardButton(text="📃 Добавить вакансию для своего проекта")
-
-        keyboard.add(updateProfileBtn, updateProjectGroupBtn, addVacancyBtn)
-    if user['status'].find("ADMIN") != -1:
-        adminPanelBtn = types.KeyboardButton(text="🛠️ Панель администратора")
-        keyboard.add(adminPanelBtn)
-    if user['status'].find("EVENT_MANAGER") != -1:
-        newEventBtn = types.KeyboardButton(text="🎟️ Новое мероприятие")
-        keyboard.add(newEventBtn)
-    return keyboard
-
-def inlineAdminPanel():
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    updateUserInfoBtn = types.InlineKeyboardButton('✏️ Обновить информацию о пользователе', callback_data=f'update_user_info')
-    getUserInfoBtn = types.InlineKeyboardButton('👤 Информация о пользователе ', callback_data=f'get_user_info')
-    getProjectInfoBtn = types.InlineKeyboardButton('📗 Информация о проекте', callback_data=f'get_project_info')
-    getUsersExcelBtn = types.InlineKeyboardButton('📁 Выгрузить Excel по пользователям', callback_data=f'get_users_excel')
-    getProjectsExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel по проектам', callback_data=f'get_projects_excel')
-
-    keyboard.add(updateUserInfoBtn, getUserInfoBtn, getProjectInfoBtn, getUsersExcelBtn, getProjectsExcelBtn)
-    return keyboard
-
-def markupExcelVacancies():
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    getVacanciesExcelBtn = types.InlineKeyboardButton('🗃 Выгрузить Excel всем вакансиям', callback_data=f'get_vacancies_excel')
-    
-    markup.add(getVacanciesExcelBtn)
-    return markup
 
 
 # -------------------------------------------------- Callback handlers -----------------------
@@ -257,7 +166,7 @@ def handle_navigation(call):
 
         projects = db.getProjectsInPage(current_page)
 
-        keyboard = create_inline_keyboard(projects, current_page, False, "")
+        keyboard = keyboards.create_inline_keyboard(projects, current_page, False, "")
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
     except Exception as e:
         print("Error in handle_navigation project keyboard: ", e)
@@ -309,13 +218,13 @@ def handle_project_selection(call):
         aboutProject = f"__Вы можете подать запрос на вступление в команду проекта «{auxiliary.filter(author['name'])}»\.__"
         if alreadyMember:
             aboutProject = "__Вы уже состоите в команде этого проекта\.__"
-            keyboard = genMainKeyboard(call.from_user.id)
+            keyboard = keyboards.genMainKeyboard(call.from_user.id)
             if partners.strip() != "" and (isAuthor or db.getUserById(call.from_user.id)['status'].find("ADMIN") != -1):
                 aboutProject = ""
                 keyboard = types.InlineKeyboardMarkup(row_width=1)
                 kickPartnerBtn = types.InlineKeyboardButton('Редактировать команду', callback_data=f'deletePartnerFrom_{idProject}')
                 keyboard.add(kickPartnerBtn)
-                bot.send_message(call.message.chat.id,"__Вы уже состоите в команде этого проекта\.__", parse_mode="MarkdownV2", reply_markup=genMainKeyboard(call.from_user.id))
+                bot.send_message(call.message.chat.id,"__Вы уже состоите в команде этого проекта\.__", parse_mode="MarkdownV2", reply_markup=keyboards.genMainKeyboard(call.from_user.id))
         msg = bot.send_message(call.message.chat.id, f'''{aboutProject}
                             
 *Наименование проекта*: _{auxiliary.filter(author['name'])}_
@@ -349,7 +258,7 @@ def handle_navigation_vacancy(call):
 
         projects = db.getProjectsForVacancyInPage(current_page, call.from_user.id)
 
-        keyboard = create_inline_keyboard(projects, current_page, True, call.from_user.id)
+        keyboard = keyboards.create_inline_keyboard(projects, current_page, True, call.from_user.id)
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
     except Exception as e:
         print("Error in handle_navigation_vacancy project keyboard: ", e)
@@ -562,7 +471,7 @@ def handle_setVacancyActive(call):
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    
+
     # user_id = message.from_user.id
     # username = message.from_user.username
     # firstName = message.from_user.first_name
@@ -589,8 +498,9 @@ def start(message):
 `\/getUserInfo @username / Фамилия / Фамилия Имя`
 *Просмотреть информацию о проекте*: 
 `\/getProjectInfo projectName`'''
- 
-    bot.send_message(chat_id=message.chat.id, text= helloTxt, reply_markup=genMainKeyboard(message.from_user.id), parse_mode="MarkdownV2")
+    if user['status'].find("PROJECT_MANAGER") != -1:
+        helloTxt = ""
+    bot.send_message(chat_id=message.chat.id, text= helloTxt, reply_markup=keyboards.genMainKeyboard(message.from_user.id), parse_mode="MarkdownV2")
 
 @bot.message_handler(commands=['updateUserInfo'])
 def updateResidentInfo(message):
@@ -681,12 +591,12 @@ def selectionProjectGroup(message):
         return
 
     page = 1
-    inlineKeyboard = create_inline_keyboard(db.getProjectsInPage(page), page, False, "")
+    inlineKeyboard = keyboards.create_inline_keyboard(db.getProjectsInPage(page), page, False, "")
     bot.send_message(chat_id=message.chat.id, text=f"Выберите проект, в команде которого Вы состоите или добавьте свой", parse_mode="Markdown", reply_markup=inlineKeyboard)
 
 @bot.message_handler(func=lambda message: message.text == "🟢 Все верно" or message.text == "↩ Выйти")
 def goMainMenu(message):
-    keyboard = genMainKeyboard(message.from_user.id)
+    keyboard = keyboards.genMainKeyboard(message.from_user.id)
     match message.text:
         case "🟢 Все верно":
             bot.send_message(chat_id=message.chat.id, text=f"👍", parse_mode="Markdown", reply_markup=keyboard)
@@ -700,7 +610,7 @@ def getAdminPanel(message):
     if (user['status'].find("ADMIN") == -1):
         return
 
-    bot.send_message(chat_id=message.chat.id, text=f'''__Возможности администратора__''', parse_mode="MarkdownV2", reply_markup=inlineAdminPanel())
+    bot.send_message(chat_id=message.chat.id, text=f'''__Возможности администратора__''', parse_mode="MarkdownV2", reply_markup=keyboards.inlineAdminPanel())
 
 @bot.message_handler(func=lambda message: message.text == "🎟️ Новое мероприятие")
 def newEvent(message):
@@ -722,7 +632,7 @@ def newVacancy(message):
         return
 
     page = 1
-    inlineKeyboard = create_inline_keyboard(db.getProjectsForVacancyInPage(page, message.from_user.id), page, True, message.from_user.id)
+    inlineKeyboard = keyboards.create_inline_keyboard(db.getProjectsForVacancyInPage(page, message.from_user.id), page, True, message.from_user.id)
     bot.send_message(chat_id=message.chat.id, text=f"Выберите проект, для которого надо добавить новую вакансию:", parse_mode="Markdown", reply_markup=inlineKeyboard)
 
 @bot.message_handler(content_types=["new_chat_members"])
@@ -813,15 +723,12 @@ def schedule_checker():
         schedule.run_pending()
         time.sleep(1)
 
-    
-
-
 def newsletterForProjectManager():
     try:
         cursor.execute("SELECT id FROM users WHERE status && '{PROJECT_MANAGER}';")
         projectManagerId = cursor.fetchone()[0]
         
-        bot.send_message(projectManagerId, "Проверьте таблицу вакансий на наличие новых записей.", reply_markup=markupExcelVacancies())
+        bot.send_message(projectManagerId, "Проверьте таблицу вакансий на наличие новых записей.", reply_markup=keyboards.markupExcelVacancies())
     except Exception as e:
         print("Error in newsletter for projectManager: ", e)
 

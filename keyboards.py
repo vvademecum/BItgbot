@@ -6,7 +6,6 @@ class Keyboards:
     def __init__(self, connection):
 
         self.connection = connection
-
         self.db = DatabaseRequests(connection)
 
     def create_inline_keyboard(self, items, page, forVacancy, userId):
@@ -81,6 +80,9 @@ class Keyboards:
         if user['status'].find("EVENT_MANAGER") != -1:
             newEventBtn = types.KeyboardButton(text="🎟️ Новое мероприятие")
             keyboard.add(newEventBtn)
+        if user['status'].find("PROJECT_MANAGER") != -1:
+            getVacanciesBtn = types.KeyboardButton(text="🎟️ Выгрузить вакансии")
+            keyboard.add(getVacanciesBtn)
         return keyboard
 
     def inlineAdminPanel(self):

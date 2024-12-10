@@ -1,6 +1,7 @@
 import openpyxl
 from openpyxl.styles import NamedStyle, Font, Alignment, Border, Side
 
+from databaseRequests import DatabaseRequests
 from keyboards import Keyboards
 
 class Auxiliary:
@@ -12,6 +13,8 @@ class Auxiliary:
 
         cursor = connection.cursor()
         self.cursor = cursor
+
+        self.db = DatabaseRequests(connection)
 
     def extract_arg(self, arg):
         return arg.split()[1:]
